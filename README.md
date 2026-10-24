@@ -102,10 +102,6 @@ your own risk and respect the rights of artists and rights holders.
   and shares its Listen Together protocol so the two apps can join the same rooms.
   Please check that project's licence and keep its credit.
 
-## 📄 Licence
-
-Released under the MIT licence (see `Cargo.toml`). Add a `LICENSE` file with your name before publishing.
-
 <div align="center">
 <br/>
 <sub>Made with 💜 and a lot of light refraction.</sub>
