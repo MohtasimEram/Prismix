@@ -31,12 +31,6 @@ app (Tauri + Rust), not a browser tab, so it has a tray icon, media keys, native
 
 ## 📸 Screenshots
 
-<!--
-  HOW TO ADD SCREENSHOTS:
-  1. Save your screenshots in docs/screenshots/ with these names (or change the names below).
-  2. Remove the first line of this comment (the one that opens it) and the last line
-     (the one that closes it, just under the table) so the table shows up.
-
 <div align="center">
 <table>
   <tr>
@@ -57,7 +51,6 @@ app (Tauri + Rust), not a browser tab, so it has a tray icon, media keys, native
   </tr>
 </table>
 </div>
--->
 
 ## 🎧 Features
 
