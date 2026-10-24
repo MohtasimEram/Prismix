@@ -1,0 +1,78 @@
+Prismix Desktop
+================
+
+STATUS
+- Frontend (./src): React 19 + TypeScript + Vite + Tailwind + Framer Motion + Zustand. Complete.
+- Rust backend (./src-tauri): complete.
+    error.rs      errors as { code, message }
+    netguard.rs   public https hosts only (SSRF guard), checked DNS
+    net.rs        native fetch with the YouTube/Spotify/Apple/Musixmatch header rules
+    rules.rs      header rules, SAPISIDHASH signing
+    vault.rs      encrypted cookie vault (AES-256-GCM, key in the OS credential store)
+    auth.rs       sign-in window + pasted-cookie import
+    ws.rs         native WebSockets for Listen Together (wss only, public addresses only)
+    discord.rs    Discord Rich Presence over the Discord app's local RPC pipe/socket
+    prefs.rs      desktop preferences (close to tray, global media keys) in prefs.json
+    tray.rs       tray icon + menu (now playing, play/pause, next, previous, show, quit)
+    shortcuts.rs  global media keys (play/pause, next, previous, stop)
+    lib.rs        wires plugins, state, window/close behaviour and the command list
+  Config: tauri.conf.json (+ tauri.macos.conf.json for the overlay title bar),
+          capabilities/default.json, permissions/prismix.toml, icons/.
+
+SETUP
+1. Node.js 22+ and Rust (https://rustup.rs), plus platform deps:
+   Windows: WebView2 + Visual Studio C++ Build Tools
+   macOS:   xcode-select --install
+   Linux:   libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
+            libdbus-1-dev build-essential libxdo-dev
+            (+ gstreamer1.0-plugins-good / -bad / gstreamer1.0-libav for audio playback)
+2. npm install
+3. npm run tauri dev      development (starts Vite on :5173 and the app)
+   npm run tauri build    installers in src-tauri/target/release/bundle
+   cd src-tauri && cargo test    unit tests (netguard, rules, auth, vault, prefs, ws, discord)
+   npm run dev            UI only, in a browser, without native features
+
+DISCORD RICH PRESENCE
+Discord shows the name and icon of a Discord *application*. Create one at
+https://discord.com/developers/applications (name it "Prismix", upload the icon
+from src-tauri/icons/icon.png), copy its Application ID, and build with:
+   PRISMIX_DISCORD_CLIENT_ID=123456789012345678 npm run tauri build
+(Windows PowerShell: $env:PRISMIX_DISCORD_CLIENT_ID="..."; npm run tauri build)
+The same variable set at run time overrides the built-in id. Without it, the
+Discord settings page reports that no application id is configured.
+
+SECURITY NOTES
+- Only the "main" window (the bundled app) has IPC. build.rs lists every app
+  command, which turns on Tauri's ACL for them; capabilities/default.json grants
+  them to "main" only. The sign-in windows (remote Google/Spotify pages) can call nothing.
+- Cookies never reach the webview; the page only sees { signedIn, generation }.
+- Native fetch and WebSockets refuse private, loopback and link-local addresses,
+  including through DNS answers and redirects.
+
+PLATFORM NOTES
+- Linux: "Keep Playing in the Tray" is off by default because stock GNOME has no tray.
+  Global media keys don't work under Wayland (X11 only); failures are logged, not fatal.
+- macOS: the window uses an overlay title bar with the native traffic lights; closing
+  hides to the menu bar, clicking the Dock icon brings it back.
+- Logs: the OS log directory for app.prismix.desktop (plus stdout in dev).
+
+CHANGES IN THIS BUILD
+- Tempo & Pitch: a player-bar button (gauge) opens sliders; also Settings > Sound.
+- Quality: streaming + download quality in Settings > Sound. Downloads are saved by Rust
+  (src-tauri/src/download.rs) to <Downloads>/Prismix/.
+- Playlist covers + pinning in the sidebar (hover a row, click the pin); pin button on playlist pages.
+- Back button top-left of the title bar (Alt+Left too).
+- Artist page: parallax hero, shuffle, compact title bar, expandable About card.
+- Bangla lyrics: cluster repair (src/lyrics/clusters.ts) + build-time patch of am-lyrics (vite.config.ts).
+- Scrobbling to ListenBrainz (Settings > Scrobbling), ported from the mobile app.
+- mappers.test.ts is skipped when the fixtures/ folder is absent.
+NOT VERIFIED: npm had no network in the build sandbox, so typecheck, vitest and cargo were not run. Run
+`npm install && npm run typecheck && npm test` and `cd src-tauri && cargo test` first.
+
+CHANGELOG (this revision)
+- Theater/full screen: the layout no longer reserves a title bar that OS full screen removes (AppShell.tsx, global.css).
+- Drag songs from any track list onto a YouTube Music playlist in the sidebar (state/dragTrack.ts, TrackList.tsx, Sidebar.tsx).
+- Tempo+pitch: one time-stretcher instead of two, plus a peak limiter (playback/audioFx.ts).
+- Settings dropdowns are the app's own glass menu (components/Select.tsx).
+- Space always plays/pauses in the full-screen player and straight after alt-tab (shell/useKeyboardShortcuts.ts).
+- Search page: hero, recent searches, richer category tiles and result cards.

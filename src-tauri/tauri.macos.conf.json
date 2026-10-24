@@ -1,0 +1,22 @@
+{
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Prismix",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 380,
+        "minHeight": 560,
+        "center": true,
+        "visible": false,
+        "decorations": true,
+        "resizable": true,
+        "dragDropEnabled": false,
+        "backgroundColor": "#1f1f1f",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ]
+  }
+}

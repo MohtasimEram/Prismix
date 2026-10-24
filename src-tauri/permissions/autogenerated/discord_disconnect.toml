@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discord-disconnect"
+description = "Enables the discord_disconnect command without any pre-configured scope."
+commands.allow = ["discord_disconnect"]
+
+[[permission]]
+identifier = "deny-discord-disconnect"
+description = "Denies the discord_disconnect command without any pre-configured scope."
+commands.deny = ["discord_disconnect"]

@@ -1,0 +1,22 @@
+[[permission]]
+identifier = "native-bridge"
+description = "The BitChord page's native bridge: sign-in, the guarded fetch and WebSocket proxies, Discord presence, desktop preferences and the tray."
+commands.allow = [
+  "auth_status",
+  "auth_sign_in",
+  "auth_sign_out",
+  "auth_import_cookies",
+  "net_fetch",
+  "net_abort",
+  "ws_open",
+  "ws_send",
+  "ws_close",
+  "discord_status",
+  "discord_connect",
+  "discord_disconnect",
+  "discord_set_activity",
+  "save_download",
+  "prefs_get",
+  "prefs_set",
+  "tray_set_now_playing",
+]

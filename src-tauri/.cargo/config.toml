@@ -1,0 +1,4 @@
+# Environment variables Cargo gives every build of the Rust side, so they don't have to be set by hand.
+# The Discord application id is public (it names the "Listening to Prismix" activity); it is not a secret.
+[env]
+PRISMIX_DISCORD_CLIENT_ID = "1563303602574069852"

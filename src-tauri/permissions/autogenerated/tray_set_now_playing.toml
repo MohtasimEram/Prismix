@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-tray-set-now-playing"
+description = "Enables the tray_set_now_playing command without any pre-configured scope."
+commands.allow = ["tray_set_now_playing"]
+
+[[permission]]
+identifier = "deny-tray-set-now-playing"
+description = "Denies the tray_set_now_playing command without any pre-configured scope."
+commands.deny = ["tray_set_now_playing"]

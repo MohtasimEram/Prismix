@@ -1,0 +1,60 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="140" y1="0" x2="880" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2A1450"/>
+      <stop offset="0.55" stop-color="#150C2B"/>
+      <stop offset="1" stop-color="#0A0814"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(820 260) rotate(90) scale(420)">
+      <stop stop-color="#FA233B" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#FA233B" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(240 820) rotate(90) scale(460)">
+      <stop stop-color="#5B5CFF" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#5B5CFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="glass" x1="512" y1="236" x2="512" y2="640" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.06"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="292" y1="236" x2="732" y2="640" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.95"/>
+      <stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.8"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="120" y1="520" x2="420" y2="440" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <linearGradient id="r1" x1="640" y1="440" x2="910" y2="270" gradientUnits="userSpaceOnUse"><stop stop-color="#FF3B5C"/><stop offset="1" stop-color="#FF3B5C" stop-opacity="0.15"/></linearGradient>
+    <linearGradient id="r2" x1="640" y1="440" x2="920" y2="350" gradientUnits="userSpaceOnUse"><stop stop-color="#FF9A4D"/><stop offset="1" stop-color="#FF9A4D" stop-opacity="0.15"/></linearGradient>
+    <linearGradient id="r3" x1="640" y1="440" x2="925" y2="430" gradientUnits="userSpaceOnUse"><stop stop-color="#FFD76A"/><stop offset="1" stop-color="#FFD76A" stop-opacity="0.15"/></linearGradient>
+    <linearGradient id="r4" x1="640" y1="440" x2="920" y2="510" gradientUnits="userSpaceOnUse"><stop stop-color="#B26BFF"/><stop offset="1" stop-color="#B26BFF" stop-opacity="0.15"/></linearGradient>
+    <linearGradient id="r5" x1="640" y1="440" x2="910" y2="590" gradientUnits="userSpaceOnUse"><stop stop-color="#4FC3FF"/><stop offset="1" stop-color="#4FC3FF" stop-opacity="0.15"/></linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="22"/></filter>
+    <clipPath id="tile"><rect width="1024" height="1024" rx="228"/></clipPath>
+  </defs>
+  <g clip-path="url(#tile)">
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <rect width="1024" height="1024" fill="url(#glowA)"/>
+    <rect width="1024" height="1024" fill="url(#glowB)"/>
+    <!-- the rays, glowing -->
+    <g filter="url(#soft)" opacity="0.8" stroke-width="44" stroke-linecap="round">
+      <path d="M640 440L900 285" stroke="url(#r1)"/><path d="M640 440L908 358" stroke="url(#r2)"/>
+      <path d="M640 440L912 432" stroke="url(#r3)"/><path d="M640 440L908 506" stroke="url(#r4)"/>
+      <path d="M640 440L900 580" stroke="url(#r5)"/>
+    </g>
+    <g stroke-width="26" stroke-linecap="round">
+      <path d="M640 440L896 290" stroke="url(#r1)"/><path d="M640 440L904 360" stroke="url(#r2)"/>
+      <path d="M640 440L908 432" stroke="url(#r3)"/><path d="M640 440L904 504" stroke="url(#r4)"/>
+      <path d="M640 440L896 576" stroke="url(#r5)"/>
+    </g>
+    <!-- the beam in -->
+    <path d="M110 524L420 440" stroke="url(#beam)" stroke-width="30" stroke-linecap="round"/>
+    <!-- the prism -->
+    <path d="M512 236L292 616H732Z" fill="url(#glass)" stroke="url(#rim)" stroke-width="14" stroke-linejoin="round"/>
+    <path d="M512 300L350 580" stroke="#FFFFFF" stroke-opacity="0.18" stroke-width="10" stroke-linecap="round"/>
+    <path d="M420 440L640 440" stroke="#FFFFFF" stroke-opacity="0.85" stroke-width="16" stroke-linecap="round"/>
+  </g>
+  <rect x="3" y="3" width="1018" height="1018" rx="225" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="6"/>
+</svg>
