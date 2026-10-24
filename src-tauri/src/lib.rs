@@ -63,6 +63,9 @@ pub fn run() {
         )
         .plugin(tauri_plugin_global_shortcut::Builder::new().with_handler(shortcuts::handler).build())
         .plugin(tauri_plugin_opener::init())
+        // In-app updates: checks the GitHub release feed (tauri.conf.json › plugins › updater).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let handle = app.handle().clone();
             let data_dir = app.path().app_data_dir()?;

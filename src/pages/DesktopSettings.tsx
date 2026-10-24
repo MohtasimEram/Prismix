@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { importCookies, type Service } from '@/desktop/session';
 import { isDesktop } from '@/desktop/tauri';
+import { appVersion, useUpdater } from '@/desktop/updater';
 import { desktopPrefs, setDesktopPrefs, type DesktopPrefs } from '@/desktop/window';
 import { EQ_BANDS, EQ_PRESETS, PITCH_LIMITS, TEMPO_LIMITS, useAudioFx, useTempoPitch } from '@/playback/audioFx';
 import { DOWNLOAD_QUALITIES, STREAM_QUALITIES, useQuality } from '@/playback/quality';
@@ -334,6 +335,46 @@ export function DesktopAppSettings() {
         checked={prefs.data.globalMediaKeys}
         onChange={(globalMediaKeys) => update.mutate({ globalMediaKeys })}
       />
+    </section>
+  );
+}
+
+// ---- Updates -----------------------------------------------------------------------
+
+/** Settings › Updates: the version, a manual check, and the install when one is found. */
+export function UpdateSettings() {
+  const { status, version, notes, progress, error, check, install } = useUpdater();
+  const current = useQuery({ queryKey: ['desktop', 'version'], queryFn: appVersion, enabled: isDesktop(), staleTime: Infinity });
+  if (!isDesktop()) return null;
+  const busy = status === 'checking' || status === 'downloading' || status === 'installing';
+  const detail =
+    status === 'checking' ? 'Checking for updates…'
+    : status === 'available' ? `Prismix ${version} is ready to install.`
+    : status === 'downloading' ? (progress === null ? 'Downloading…' : `Downloading… ${Math.round(progress * 100)}%`)
+    : status === 'installing' ? 'Installing. Prismix will restart.'
+    : status === 'uptodate' ? 'You’re on the latest version.'
+    : status === 'error' ? `Couldn’t update: ${error}`
+    : 'Prismix checks for updates automatically.';
+  return (
+    <section className={settingsUi.group}>
+      <div className={settingsUi.row}>
+        <span className={settingsUi.rowText}>
+          <span>Version {current.data ?? ''}</span>
+          <span className={`${settingsUi.rowDetail} ${status === 'error' ? 'text-key' : ''}`}>{detail}</span>
+        </span>
+        {status === 'available' ? (
+          <button className={`${settingsUi.inlineButton} bg-key! text-white!`} onClick={() => void install()}>
+            Update and Restart
+          </button>
+        ) : (
+          <button className={settingsUi.inlineButton} disabled={busy} onClick={() => void check()}>
+            Check for Updates
+          </button>
+        )}
+      </div>
+      {status === 'available' && notes && (
+        <div className={`${settingsUi.row} whitespace-pre-wrap ${settingsUi.rowDetail}`}>{notes}</div>
+      )}
     </section>
   );
 }

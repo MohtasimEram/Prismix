@@ -12,7 +12,7 @@ import { useYtAuth } from '@/extension/useYtAuth';
 import { useParty } from '@/party/useParty';
 import { useHistorySettings } from '@/playback/historyReporting';
 import { CROSSFADE_CHOICES, usePlayer } from '@/state/player';
-import { CookieSignInDialog, DesktopAppSettings, EqualizerSettings, QualitySettings, ScrobblingSettings, SleepTimerSetting, TempoPitchSettings } from './DesktopSettings';
+import { CookieSignInDialog, DesktopAppSettings, EqualizerSettings, QualitySettings, ScrobblingSettings, SleepTimerSetting, TempoPitchSettings, UpdateSettings } from './DesktopSettings';
 import { AppleMusicToggles, CanvasToggle, SpotifyIntegration, Toggle } from './IntegrationSettings';
 import { settingsUi } from './settingsStyles';
 
@@ -187,6 +187,9 @@ export default function SettingsPage() {
 
         <h2 className={settingsUi.sectionHeader}>Desktop</h2>
         <DesktopAppSettings />
+
+        <h2 className={settingsUi.sectionHeader}>Updates</h2>
+        <UpdateSettings />
 
         <h2 className={settingsUi.sectionHeader}>Lyrics</h2>
         <section className={settingsUi.group}>

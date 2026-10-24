@@ -10,6 +10,7 @@ import { useLayout } from '@/state/layout';
 import { startSessionMemory } from '@/state/session';
 import { useUi } from '@/state/ui';
 import { DownloadToasts } from './DownloadToasts';
+import { UpdateToast } from './UpdateToast';
 import { MobileTopBar } from './MobileTopBar';
 import { PlayerBar } from './PlayerBar';
 import { ScrollContainerContext } from './scrollContainer';
@@ -183,6 +184,7 @@ export function AppShell() {
         <PlayerBar />
         <SidePanel />
         <DownloadToasts />
+        <UpdateToast />
       </div>
       <FullScreenLayer />
     </div>

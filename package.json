@@ -1,7 +1,7 @@
 {
   "name": "prismix-desktop",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -21,6 +21,8 @@
     "@tanstack/react-query": "^5.104.3",
     "@tanstack/react-virtual": "^3.14.19",
     "@tauri-apps/api": "^2.5.0",
+    "@tauri-apps/plugin-process": "^2.2.0",
+    "@tauri-apps/plugin-updater": "^2.7.0",
     "@uimaxbai/am-lyrics": "^1.8.2",
     "bgutils-js": "^4.0.3",
     "framer-motion": "^12.23.0",
