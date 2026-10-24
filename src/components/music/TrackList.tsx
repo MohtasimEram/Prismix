@@ -122,12 +122,12 @@ function Row({ track, variant, position, fallbackArtwork, onPlayRow }: RowProps)
             <>
               <Artwork src={track.thumbnail ?? fallbackArtwork ?? null} displayWidth={40} radius="var(--radius-artwork-small)" />
               {current && (
-                // The playing row's marker: a still play glyph over the artwork (or where the number was).
+                // The playing row's marker: a pause glyph while it plays (play when paused) over the artwork (or where the number was).
                 <span
                   className="absolute inset-0 grid place-items-center rounded-artwork-sm bg-[rgb(0_0_0/0.45)] text-white group-hover/row:invisible"
                   aria-label="Now playing"
                 >
-                  <PlayIcon size={18} />
+                  {playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
                 </span>
               )}
             </>
@@ -135,7 +135,7 @@ function Row({ track, variant, position, fallbackArtwork, onPlayRow }: RowProps)
             <span className="type-body text-secondary group-hover/row:invisible">
               {current ? (
                 <span className="grid place-items-center text-primary group-hover/row:invisible" aria-label="Now playing">
-                  <PlayIcon size={14} />
+                  {playing ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
                 </span>
               ) : (
                 (track.index ?? position)

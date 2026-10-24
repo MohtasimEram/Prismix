@@ -1,6 +1,7 @@
 import { PrefetchLink } from '@/components/PrefetchLink';
-import { PlayIcon } from '@/components/icons/Transport';
+import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
 import type { MusicItem } from '@/data/music/types';
+import { usePlayer } from '@/state/player';
 import { trackDragProps } from '@/state/dragTrack';
 import { Artwork } from './Artwork';
 import { ExplicitBadge } from './ExplicitBadge';
@@ -44,18 +45,35 @@ function Byline({ item }: { item: MusicItem }) {
   );
 }
 
+/** Whether [item] is the loaded track and whether it is sounding, so its play control can show pause. */
+function usePlayback(item: MusicItem) {
+  const current = usePlayer((s) => isPlayable(item) && s.nowPlaying?.videoId === item.id);
+  const status = usePlayer((s) => s.status);
+  const playing = current && (status === 'playing' || status === 'loading' || status === 'buffering');
+  return { current, playing };
+}
+
+/** Pause or resume the loaded track, else start [item] (or run [start] when given). */
+function toggleOrPlay(current: boolean, item: MusicItem, start?: () => void) {
+  if (current) usePlayer.getState().togglePlay();
+  else if (start) start();
+  else playTrack(item);
+}
+
 function PlayPlatter({ item }: { item: MusicItem }) {
+  const { current, playing } = usePlayback(item);
   return (
     <button
-      className="pointer-events-auto absolute bottom-2.5 left-2.5 grid size-[30px] place-items-center rounded-full bg-thin-material text-white [backdrop-filter:saturate(180%)_blur(60px)] hover:bg-key-bg"
-      aria-label={`Play ${item.title}`}
+      // Glass, lighter on hover; it stays visible on the song that is playing.
+      className={`absolute bottom-2.5 left-2.5 z-3 grid size-[30px] place-items-center rounded-full bg-thin-material text-white transition-[opacity,background-color] duration-100 [backdrop-filter:saturate(180%)_blur(60px)] hover:bg-white/35 focus-visible:opacity-100 group-focus-within/art:opacity-100 group-hover/art:opacity-100 ${playing ? 'opacity-100' : 'opacity-0'}`}
+      aria-label={playing ? `Pause ${item.title}` : `Play ${item.title}`}
       onClick={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        playTrack(item);
+        toggleOrPlay(current, item);
       }}
     >
-      <PlayIcon size={16} />
+      {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
     </button>
   );
 }
@@ -63,16 +81,18 @@ function PlayPlatter({ item }: { item: MusicItem }) {
 /** The artwork with its hover scrim, linking to the item or playing it. */
 function LockupArtwork({ item, width, aspect }: { item: MusicItem; width: number; aspect: number }) {
   const href = hrefFor(item);
+  const { current } = usePlayback(item);
   return (
     <div className="group/art relative rounded-artwork-md">
       <Artwork src={item.thumbnail} displayWidth={width} aspect={aspect} radius="var(--radius-artwork-medium)" />
       {href ? (
         <PrefetchLink to={href} className={overlayLink} aria-label={item.title} />
       ) : (
-        <button className={overlayLink} aria-label={`Play ${item.title}`} onClick={() => playTrack(item)} />
+        <button className={overlayLink} aria-label={`Play ${item.title}`} onClick={() => toggleOrPlay(current, item)} />
       )}
       {/* Hover scrim and platter (report §2: --lockupHoverBGColor, opacity .1s ease-in). */}
-      <div className="pointer-events-none absolute inset-0 z-2 rounded-[inherit] bg-lockup-hover opacity-0 transition-opacity duration-100 ease-in group-focus-within/art:opacity-100 group-hover/art:opacity-100">{isPlayable(item) && <PlayPlatter item={item} />}</div>
+      <div className="pointer-events-none absolute inset-0 z-2 rounded-[inherit] bg-lockup-hover opacity-0 transition-opacity duration-100 ease-in group-focus-within/art:opacity-100 group-hover/art:opacity-100" />
+      {isPlayable(item) && <PlayPlatter item={item} />}
     </div>
   );
 }
@@ -130,17 +150,18 @@ export function CircleLockup({ item, width = 160 }: { item: MusicItem; width?: n
 
 /** A song row inside a shelf (report §2, track lockup): 40px art, title, byline. */
 export function TrackLockup({ item, onPlay }: { item: MusicItem; onPlay?: () => void }) {
-  const play = onPlay ?? (() => playTrack(item));
+  const { current, playing } = usePlayback(item);
+  const play = () => toggleOrPlay(current, item, onPlay);
   return (
     // 52px art column (40 + 12 gap), content; 55px tall.
     <div className="group/track grid h-[55px] grid-cols-[40px_minmax(0,1fr)] items-center gap-x-3 py-[7.5px] pr-3.5 pl-0" {...dragOf(item)}>
       <button className="group/art relative w-10 rounded-artwork-sm" aria-label={`Play ${item.title}`} onClick={play}>
         <Artwork src={item.thumbnail} displayWidth={40} radius="var(--radius-artwork-small)" />
         <span
-          className="absolute inset-0 grid place-items-center rounded-[inherit] bg-lockup-hover text-white opacity-0 transition-opacity duration-100 ease-in group-hover/track:opacity-100 group-focus-visible/art:opacity-100"
+          className={`absolute inset-0 grid place-items-center rounded-[inherit] bg-lockup-hover text-white transition-opacity duration-100 ease-in group-hover/track:opacity-100 group-focus-visible/art:opacity-100 opacity-0`}
           aria-hidden="true"
         >
-          <PlayIcon size={16} />
+          {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
         </span>
       </button>
       <div className="flex min-w-0 flex-col gap-px px-1">

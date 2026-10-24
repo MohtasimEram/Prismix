@@ -119,6 +119,7 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
               data-active={i === active || undefined}
               onMouseDown={(e) => e.preventDefault()}
               onMouseEnter={() => setActive(i)}
+              onMouseLeave={() => setActive((current) => (current === i ? -1 : current))}
               onClick={() => pick(option)}
             >
               {option.kind === 'query' ? (
@@ -160,7 +161,7 @@ const lockup = `${optionRow} mt-1.5 grid grid-cols-[46px_minmax(0,1fr)] items-ce
 
 /**
  * The play badge on a song's cover: plays it, or pauses it while it is the one playing, and the
- * suggestions stay open (a click here is not a pick). Shown while the row is hovered or selected.
+ * suggestions stay open (a click here is not a pick). Shown while the row is hovered or selected, and always on the song that is playing.
  */
 function PlayBadge({ item }: { item: MusicItem }) {
   const current = usePlayer((s) => s.nowPlaying?.videoId === item.id);
@@ -172,7 +173,7 @@ function PlayBadge({ item }: { item: MusicItem }) {
       type="button"
       tabIndex={-1}
       aria-label={active ? `Pause ${item.title}` : `Play ${item.title}`}
-      className="absolute inset-0 grid place-items-center rounded-[var(--radius-artwork-small)] bg-black/45 opacity-0 transition-opacity duration-150 group-data-active/option:opacity-100"
+      className={`absolute inset-0 grid place-items-center rounded-[var(--radius-artwork-small)] bg-black/45 transition-opacity duration-150 group-data-active/option:opacity-100 ${active ? 'opacity-100' : 'opacity-0'}`}
       onClick={(e) => {
         e.stopPropagation();
         if (current) usePlayer.getState().togglePlay();
