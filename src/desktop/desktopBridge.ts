@@ -22,7 +22,7 @@ import * as yt from './ytAuth';
  * always finds it, so the app's pages, hooks and player work unchanged.
  */
 
-export const DESKTOP_VERSION = '1.0.1';
+export const DESKTOP_VERSION = '1.0.2';
 
 const STATS = /^https:\/\/(s|music|www)\.youtube\.com\/api\/stats\/(playback|watchtime|atr)(\?|$)/;
 const IDENTITY_HEADERS = ['authorization', 'cookie', 'x-goog-authuser', 'x-goog-pageid', 'x-origin', 'origin', 'referer'];

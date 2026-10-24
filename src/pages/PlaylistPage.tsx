@@ -5,7 +5,8 @@ import { playList, shuffleList } from '@/components/music/play';
 import { PinButton } from '@/components/music/PinButton';
 import { LoadError, LoadMoreError, NeedsExtension } from '@/components/music/States';
 import { TrackList } from '@/components/music/TrackList';
-import { usePlaylist, useYouTubeReady } from '@/data/music/queries';
+import { LIKED_MUSIC_PLAYLIST } from '@/data/music/library';
+import { useLibraryPlaylists, usePlaylist, useRemoveFromPlaylist, useYouTubeReady } from '@/data/music/queries';
 import { ytmPinKey } from '@/state/pins';
 import { useArtworkColor } from '@/lib/artworkColor';
 import { usePageTint } from '@/lib/usePageTint';
@@ -18,6 +19,11 @@ export default function PlaylistPage() {
   const { missing } = useYouTubeReady();
   const playlist = usePlaylist(id);
   const header = playlist.data?.pages[0]?.header ?? null;
+  // Only the account's own playlists can lose a song (Liked Music is un-liked, not edited).
+  const mine = useLibraryPlaylists();
+  const bare = id.replace(/^VL/, '');
+  const editable = bare !== LIKED_MUSIC_PLAYLIST.replace(/^VL/, '') && (mine.data ?? []).some((p) => p.id.replace(/^VL/, '') === bare);
+  const remove = useRemoveFromPlaylist();
   usePageTint(useArtworkColor(header?.thumbnail));
 
   const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = playlist;
@@ -50,7 +56,13 @@ export default function PlaylistPage() {
         onShuffle={() => shuffleList(tracks, context)}
         extra={<PinButton pin={{ key: ytmPinKey(id), title: header.title, thumbnail: header.thumbnail, href: `/playlist/${encodeURIComponent(id)}` }} />}
       />
-      <TrackList tracks={tracks} variant="playlist" onNearEnd={onNearEnd} source={context.source} />
+      <TrackList
+        tracks={tracks}
+        variant="playlist"
+        onNearEnd={onNearEnd}
+        source={context.source}
+        onRemove={editable ? (track) => remove.mutate({ playlistId: id, videoId: track.videoId }) : undefined}
+      />
       {isFetchingNextPage && <div className="flex justify-center py-5 type-callout text-secondary">Loading more songs…</div>}
       {playlist.isFetchNextPageError && <LoadMoreError onRetry={() => void fetchNextPage()} />}
       <footer className={detailFooter}>

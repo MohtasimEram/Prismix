@@ -301,32 +301,114 @@ export async function setListSaved(playlistId: string, saved: boolean): Promise<
 export interface PlaylistOption {
   playlistId: string;
   title: string;
+  /** The playlist already holds the track (YouTube's `containsSelectedVideos`). */
+  contains: boolean;
 }
 
 /**
  * The playlists a track can be added to, as YouTube Music's "Save to
- * playlist" lists them. YouTube doesn't say which already hold the track
- * (adding is deduplicated instead), and its "Liked Music" entry is really a
- * like, which Favorite already does, so it's left out.
+ * playlist" lists them. Its "Liked Music" entry is really a like, which
+ * Favorite already does, so it's left out.
+ *
+ * YouTube's own `containsSelectedVideos` flag is unreliable for songs that
+ * were added to a playlist long ago, so it is returned at once and the
+ * playlists it reports as not holding the track are then checked against
+ * their real contents, one by one (`playlistHasTrack`), without holding up the list.
  */
 export async function fetchPlaylistOptions(videoId: string): Promise<PlaylistOption[]> {
   const yt = await getSignedInnertube();
   const response = await yt.actions.execute('/playlist/get_add_to_playlist', { videoIds: [videoId], client: 'YTMUSIC' });
-  return collect(response.data, 'playlistAddToOptionRenderer')
+  const options = collect(response.data, 'playlistAddToOptionRenderer')
     .map((option) => ({
       playlistId: typeof option.playlistId === 'string' ? option.playlistId : '',
       title: runsText(option.title),
+      contains: option.containsSelectedVideos === 'ALL' || option.containsSelectedVideos === 'SOME',
     }))
     .filter((option) => option.playlistId && option.playlistId !== LIKED_MUSIC_PLAYLIST && option.title);
+  return options;
 }
 
-export async function addToPlaylist(playlistId: string, videoId: string): Promise<void> {
+const bareId = (playlistId: string) => playlistId.replace(/^VL/, '');
+
+/** The video ids each playlist held when last read, so reopening the card doesn't re-read every playlist. */
+const MEMBERSHIP_TTL = 60_000;
+const membership = new Map<string, { at: number; ids: Set<string>; complete: boolean }>();
+const MAX_PLAYLIST_PAGES = 100;
+
+/** Forgets what is known of a playlist's contents (after it changed). */
+export function forgetPlaylistContents(playlistId: string): void {
+  membership.delete(bareId(playlistId));
+}
+
+/**
+ * Whether the playlist's actual contents include the track, reading it page by
+ * page and stopping at the first match. A playlist that can't be read counts
+ * as not holding it, as before.
+ */
+export async function playlistHasTrack(playlistId: string, videoId: string, fresh = false): Promise<boolean> {
+  const id = bareId(playlistId);
+  const cached = membership.get(id);
+  if (!fresh && cached && Date.now() - cached.at < MEMBERSHIP_TTL && cached.ids.has(videoId)) return true;
+  if (!fresh && cached && Date.now() - cached.at < MEMBERSHIP_TTL && cached.complete) return false;
+  const ids = new Set<string>();
+  let complete = false;
+  try {
+    const yt = await getMusicClient();
+    let page: YTMusic.Playlist | null = await yt.music.getPlaylist(id);
+    for (let n = 0; page && n < MAX_PLAYLIST_PAGES; n++) {
+      for (const item of page.items ?? []) {
+        const raw = item as { id?: unknown; video_id?: unknown };
+        for (const candidate of [raw.id, raw.video_id]) if (typeof candidate === 'string') ids.add(candidate);
+      }
+      if (ids.has(videoId)) break;
+      if (!page.has_continuation) {
+        complete = true;
+        break;
+      }
+      try {
+        page = await page.getContinuation();
+      } catch (error) {
+        // YouTube offers one more page than it has: that is the end of the list.
+        if (/did not have any content|no continuation/i.test(String(error))) complete = true;
+        else throw error;
+        break;
+      }
+    }
+  } catch {
+    return ids.has(videoId);
+  }
+  membership.set(id, { at: Date.now(), ids, complete });
+  return ids.has(videoId);
+}
+
+/**
+ * Adds a track to one of the account's playlists, unless it is already in it:
+ * a playlist never holds the same song twice. YouTube's own "skip duplicates"
+ * option is not relied on; the playlist's current contents are read first.
+ * Resolves 'duplicate' when nothing had to be added.
+ */
+export async function addToPlaylist(playlistId: string, videoId: string): Promise<'added' | 'duplicate'> {
+  const id = bareId(playlistId);
+  if (await playlistHasTrack(id, videoId, true).catch(() => false)) return 'duplicate';
   const yt = await getSignedInnertube();
   await yt.actions.execute('/browse/edit_playlist', {
-    playlistId: playlistId.replace(/^VL/, ''),
+    playlistId: id,
     actions: [{ action: 'ACTION_ADD_VIDEO', addedVideoId: videoId, dedupeOption: 'DEDUPE_OPTION_SKIP' }],
     client: 'YTMUSIC',
   });
+  forgetPlaylistContents(id);
+  return 'added';
+}
+
+/** Takes a track out of a playlist (every copy of it, by video id). */
+export async function removeFromPlaylist(playlistId: string, videoId: string): Promise<void> {
+  const yt = await getSignedInnertube();
+  await yt.actions.execute('/browse/edit_playlist', {
+    playlistId: bareId(playlistId),
+    actions: [{ action: 'ACTION_REMOVE_VIDEO_BY_VIDEO_ID', removedVideoId: videoId }],
+    client: 'YTMUSIC',
+  });
+  forgetPlaylistContents(playlistId);
 }
 
 /**
@@ -339,7 +421,7 @@ export async function createPlaylist(title: string, videoIds: string[], descript
     title,
     description,
     privacyStatus: 'PRIVATE',
-    videoIds,
+    videoIds: [...new Set(videoIds)],
     client: 'YTMUSIC',
   });
   const id = (response.data as { playlistId?: string } | undefined)?.playlistId;

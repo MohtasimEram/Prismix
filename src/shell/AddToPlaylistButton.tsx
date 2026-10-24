@@ -1,7 +1,7 @@
-import { Check, ListPlus, TriangleAlert } from 'lucide-react';
+import { Check, ListPlus, Minus, TriangleAlert } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useAddToPlaylist, usePlaylistOptions, useSignedIn } from '@/data/music/queries';
+import { useAddToPlaylist, usePlaylistOptions, useRemoveFromPlaylist, useSignedIn } from '@/data/music/queries';
 import { isVideoId } from '@/state/dragTrack';
 
 /**
@@ -16,13 +16,17 @@ export function AddToPlaylistButton({ videoId, className }: { videoId: string | 
   const panel = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<React.CSSProperties>({ visibility: 'hidden' });
   const valid = isVideoId(videoId);
-  const options = usePlaylistOptions(videoId ?? '', open && valid);
+  // Warm up on hover or focus, so the playlists are usually ready by the time it is clicked.
+  const [warm, setWarm] = useState(false);
+  const options = usePlaylistOptions(videoId ?? '', (open || warm) && valid);
   const add = useAddToPlaylist();
+  const remove = useRemoveFromPlaylist();
   // The playlist just chosen, and how it went; cleared with the panel or a different song.
   const [result, setResult] = useState<{ playlistId: string; ok: boolean } | null>(null);
 
   useEffect(() => {
     setOpen(false);
+    setWarm(false);
     setResult(null);
   }, [videoId]);
 
@@ -70,6 +74,8 @@ export function AddToPlaylistButton({ videoId, className }: { videoId: string | 
         aria-haspopup="dialog"
         aria-expanded={open}
         title="Add to Playlist"
+        onPointerEnter={() => setWarm(true)}
+        onFocus={() => setWarm(true)}
         onClick={() => {
           setResult(null);
           setOpen((v) => !v);
@@ -93,23 +99,42 @@ export function AddToPlaylistButton({ videoId, className }: { videoId: string | 
               {options.data?.length === 0 && <p className="px-4 py-2 type-body-reduced text-secondary">No playlists yet</p>}
               {options.data?.map((option) => {
                 const mine = result?.playlistId === option.playlistId ? result : null;
+                // Already in the playlist (from YouTube, or added a moment ago): ticked, and clicking it takes the song out.
+                const has = option.contains || mine?.ok === true;
                 return (
                   <button
                     key={option.playlistId}
-                    className="flex w-full items-center gap-2 px-4 py-1.5 text-start type-body-reduced hover:bg-quinary focus-visible:bg-quinary"
-                    disabled={add.isPending}
-                    onClick={() =>
-                      add.mutate(
-                        { playlistId: option.playlistId, videoId },
-                        {
-                          onSuccess: () => setResult({ playlistId: option.playlistId, ok: true }),
-                          onError: () => setResult({ playlistId: option.playlistId, ok: false }),
-                        },
-                      )
-                    }
+                    className="group flex w-full items-center gap-2 px-4 py-1.5 text-start type-body-reduced hover:bg-quinary focus-visible:bg-quinary disabled:cursor-default disabled:hover:bg-transparent"
+                    disabled={add.isPending || remove.isPending}
+                    aria-label={has ? `${option.title} (added, select to remove)` : undefined}
+                    title={has ? 'Remove from playlist' : undefined}
+                    onClick={() => {
+                      const { playlistId } = option;
+                      if (has) {
+                        setResult(null);
+                        remove.mutate({ playlistId, videoId }, { onError: () => setResult({ playlistId, ok: false }) });
+                      } else {
+                        add.mutate(
+                          { playlistId, videoId },
+                          {
+                            onSuccess: () => setResult({ playlistId, ok: true }),
+                            onError: () => setResult({ playlistId, ok: false }),
+                          },
+                        );
+                      }
+                    }}
                   >
-                    <span className="min-w-0 flex-1 truncate">{option.title}</span>
-                    {mine && (mine.ok ? <Check size={15} className="text-green" aria-label="Added" /> : <TriangleAlert size={15} className="text-destructive" aria-label="Couldn’t add" />)}
+                    <span className={`min-w-0 flex-1 truncate ${has ? 'text-secondary' : ''}`}>{option.title}</span>
+                    {mine?.ok === false ? (
+                      <TriangleAlert size={15} className="text-destructive" aria-label="Couldn’t update" />
+                    ) : (
+                      has && (
+                        <>
+                          <Check size={15} className="text-green group-hover:hidden group-focus-visible:hidden" aria-label="Added" />
+                          <Minus size={15} className="hidden text-secondary group-hover:block group-focus-visible:block" aria-label="Remove" />
+                        </>
+                      )
+                    )}
                   </button>
                 );
               })}

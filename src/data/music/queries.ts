@@ -3,6 +3,7 @@ import {
   queryOptions,
   useInfiniteQuery,
   useMutation,
+  useQueries,
   useQuery,
   type InfiniteData,
 } from '@tanstack/react-query';
@@ -13,6 +14,7 @@ import { useYtAuth, ytAuthSnapshot } from '@/extension/useYtAuth';
 import { queryClient } from '@/lib/queryClient';
 import {
   addToPlaylist,
+  removeFromPlaylist,
   fetchAlbum,
   fetchArtist,
   fetchBrowse,
@@ -26,6 +28,7 @@ import {
   fetchLikeStatus,
   fetchPlaylist,
   fetchPlaylistOptions,
+  playlistHasTrack,
   fetchSearch,
   fetchSuggestions,
   setArtistFollowed,
@@ -33,6 +36,7 @@ import {
   setTrackLiked,
   type LikeStatus,
   type Paged,
+  type PlaylistOption,
 } from './api';
 import { isLibrarySection, LIKED_MUSIC_PLAYLIST, type LibrarySection } from './library';
 import type { AlbumPage, ArtistPage, BrowseLink, BrowsePage, HeaderInfo, PlaylistPage, Shelf, Track } from './types';
@@ -291,22 +295,104 @@ export function useSetListSaved() {
   });
 }
 
+/** Songs added this session, as `playlist:video`: kept in case YouTube's own "already in" flag lags behind. */
+const addedHere = new Set<string>();
+const addedKey = (playlistId: string, videoId: string) => `${playlistId.replace(/^VL/, '')}:${videoId}`;
+
+/** Songs taken out this session, same key: kept in case YouTube's flag still says they're in. Forgotten after a while. */
+const removedHere = new Set<string>();
+const REMOVED_MEMORY_MS = 2 * 60_000;
+function markRemoved(key: string): void {
+  removedHere.add(key);
+  setTimeout(() => removedHere.delete(key), REMOVED_MEMORY_MS);
+}
+
+/** Whether a playlist's real contents include the song; checked per playlist so the list needn't wait for it. */
+const hasKey = (playlistId: string, videoId: string) => ['music', 'playlist-has', bareId(playlistId), videoId] as const;
+const bareId = (playlistId: string) => playlistId.replace(/^VL/, '');
+
 export function usePlaylistOptions(videoId: string, enabled: boolean) {
   const signedIn = useSignedIn();
-  return useQuery({
+  const base = useQuery({
     queryKey: ['music', 'playlist-options', videoId],
     queryFn: () => fetchPlaylistOptions(videoId),
     enabled: signedIn && enabled,
     staleTime: 0,
   });
+  // YouTube's flag misses songs added long ago: the playlists it calls empty are read, a few at a time.
+  const unflagged = (base.data ?? []).filter((o) => !o.contains);
+  const checks = useQueries({
+    queries: unflagged.map((o) => ({
+      queryKey: hasKey(o.playlistId, videoId),
+      queryFn: () => playlistHasTrack(o.playlistId, videoId),
+      enabled: signedIn && enabled,
+      staleTime: 60_000,
+      retry: false,
+    })),
+  });
+  const found = new Set<string>();
+  unflagged.forEach((o, i) => {
+    if (checks[i]?.data === true) found.add(bareId(o.playlistId));
+  });
+  const data = base.data?.map((o) => {
+    const key = addedKey(o.playlistId, videoId);
+    const contains = o.contains || found.has(bareId(o.playlistId));
+    // Songs added or removed here stay as they were left, however often the panel is reopened.
+    return { ...o, contains: (contains && !removedHere.has(key)) || addedHere.has(key) };
+  });
+  return { ...base, data };
 }
 
+/** Adds a song to a playlist once: a second try resolves 'duplicate' and changes nothing. */
 export function useAddToPlaylist() {
   return useMutation({
     mutationFn: ({ playlistId, videoId }: { playlistId: string; videoId: string }) => addToPlaylist(playlistId, videoId),
+    onSuccess: (_result, { playlistId, videoId }) => {
+      addedHere.add(addedKey(playlistId, videoId));
+      removedHere.delete(addedKey(playlistId, videoId));
+      queryClient.setQueryData(hasKey(playlistId, videoId), true);
+      queryClient.setQueryData<PlaylistOption[]>(['music', 'playlist-options', videoId], (options) =>
+        options?.map((o) => (o.playlistId.replace(/^VL/, '') === playlistId.replace(/^VL/, '') ? { ...o, contains: true } : o)),
+      );
+    },
     onSettled: (_data, _error, { playlistId }) => {
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', playlistId] });
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', `VL${playlistId.replace(/^VL/, '')}`] });
+    },
+  });
+}
+
+/** Removes a song from one of the account's playlists; the page drops it at once and puts it back if that fails. */
+export function useRemoveFromPlaylist() {
+  return useMutation({
+    mutationFn: ({ playlistId, videoId }: { playlistId: string; videoId: string }) => removeFromPlaylist(playlistId, videoId),
+    onMutate: async ({ playlistId, videoId }) => {
+      const same = (key: readonly unknown[]) => typeof key[2] === 'string' && key[2].replace(/^VL/, '') === playlistId.replace(/^VL/, '');
+      const filter = { queryKey: ['music', 'playlist'], predicate: (query: { queryKey: readonly unknown[] }) => same(query.queryKey) };
+      const before = queryClient.getQueriesData<InfiniteData<PlaylistChunk>>(filter);
+      queryClient.setQueriesData<InfiniteData<PlaylistChunk>>(filter, (data) =>
+        data && { ...data, pages: data.pages.map((page) => ({ ...page, tracks: page.tracks.filter((t) => t.videoId !== videoId) })) },
+      );
+      addedHere.delete(addedKey(playlistId, videoId));
+      markRemoved(addedKey(playlistId, videoId));
+      queryClient.setQueryData(hasKey(playlistId, videoId), false);
+      // The playlist-options card drops its tick at once too.
+      const optionsKey = ['music', 'playlist-options', videoId];
+      const optionsBefore = queryClient.getQueryData<PlaylistOption[]>(optionsKey);
+      queryClient.setQueryData<PlaylistOption[]>(optionsKey, (options) =>
+        options?.map((o) => (o.playlistId.replace(/^VL/, '') === playlistId.replace(/^VL/, '') ? { ...o, contains: false } : o)),
+      );
+      return { before, optionsBefore };
+    },
+    onError: (_error, { playlistId, videoId }, context) => {
+      for (const [key, data] of context?.before ?? []) queryClient.setQueryData(key, data);
+      removedHere.delete(addedKey(playlistId, videoId));
+      void queryClient.invalidateQueries({ queryKey: hasKey(playlistId, videoId) });
+      if (context?.optionsBefore) queryClient.setQueryData(['music', 'playlist-options', videoId], context.optionsBefore);
+    },
+    onSettled: (_data, _error, { videoId }) => {
+      void queryClient.invalidateQueries({ queryKey: ['music', 'playlist'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'playlist-options', videoId] });
     },
   });
 }
