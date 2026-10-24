@@ -12,6 +12,7 @@ import {
   usesWebPo,
   excludeClient,
   playerRequest,
+  isLiveStream,
   resolvePlayer,
   UnplayableError,
   type PlayerClientName,
@@ -214,16 +215,23 @@ export class YouTubeEngine {
     this.current = { videoId, client, signed };
     this.direct = null;
 
-    const direct = hasDirectAudio(info);
-    const manifest = direct ? await this.directManifest(resolved) : await this.sabrManifest(player, resolved);
+    // A live station plays from its HLS manifest, at the live edge; there is nothing to seek in.
+    const live = isLiveStream(info);
+    const direct = !live && hasDirectAudio(info);
+    let mode = 'live';
+    if (live) {
+      this.useFetchPlugin();
+      await timed(`${client} live load`, videoId, () => player.load(info.streaming_data!.hls_manifest_url!, null, 'application/x-mpegurl'));
+    } else {
+      const manifest = direct ? await this.directManifest(resolved) : await this.sabrManifest(player, resolved);
+      this.checkCurrent(generation);
+      mode = direct ? 'direct' : 'SABR';
+      await timed(`${client} ${mode} load`, videoId, () =>
+        player.load(`data:application/dash+xml;base64,${btoa(manifest)}`, startSec, 'application/dash+xml'),
+      );
+    }
     this.checkCurrent(generation);
-    const mode = direct ? 'direct' : 'SABR';
-
-    await timed(`${client} ${mode} load`, videoId, () =>
-      player.load(`data:application/dash+xml;base64,${btoa(manifest)}`, startSec, 'application/dash+xml'),
-    );
-    this.checkCurrent(generation);
-    const format = `${this.selectAudio(player)} ${mode}`;
+    const format = live ? `${this.selectLiveVariant(player)} live` : `${this.selectAudio(player)} ${mode}`;
     if (direct) this.direct = resolved;
 
     if (autoplay) {
@@ -242,7 +250,7 @@ export class YouTubeEngine {
       videoId,
       title: basic.title ?? '',
       author: basic.author ?? '',
-      durationSec: basic.duration ?? Math.round(player.seekRange().end),
+      durationSec: live ? 0 : (basic.duration ?? Math.round(player.seekRange().end)),
       thumbnails: [...(basic.thumbnail ?? [])]
         .map((t) => ({ url: t.url, width: t.width, height: t.height }))
         .sort((a, b) => b.width - a.width),
@@ -253,15 +261,10 @@ export class YouTubeEngine {
   }
 
   /**
-   * A plain DASH manifest over the response's own audio URLs, which Shaka
-   * fetches by byte range. This is how Android plays YouTube: InnerTubeX runs
-   * with SABR off and plays the direct URLs a client like VISIONOS returns.
-   * YouTube.js deciphers each URL (signature and n parameter) with the player
-   * script while rendering the manifest.
+   * The SABR adapter's dispose() unregisters Shaka's http(s) schemes
+   * outright; put Shaka's own fetch plugin back before a plain load.
    */
-  private async directManifest({ videoId, client, info }: ResolvedPlayer): Promise<string> {
-    // The SABR adapter's dispose() unregisters Shaka's http(s) schemes
-    // outright; put Shaka's own fetch plugin back before a plain load.
+  private useFetchPlugin(): void {
     for (const scheme of ['http', 'https']) {
       shaka.net.NetworkingEngine.registerScheme(
         scheme,
@@ -269,6 +272,29 @@ export class YouTubeEngine {
         shaka.net.NetworkingEngine.PluginPriority.FALLBACK,
       );
     }
+  }
+
+  /**
+   * A live station's HLS manifest offers muxed video-and-audio renditions; this is an audio
+   * element, so the lightest one is taken (the smallest picture, the same audio).
+   */
+  private selectLiveVariant(player: shaka.Player): string {
+    const tracks = player.getVariantTracks();
+    const lightest = tracks.reduce<shaka.extern.Track | null>((a, b) => (!a || b.bandwidth < a.bandwidth ? b : a), null);
+    if (lightest && !lightest.active) player.selectVariantTrack(lightest, true);
+    const chosen = lightest ?? tracks.find((t) => t.active);
+    return chosen ? `${chosen.audioCodec ?? 'audio'} ${Math.round(chosen.bandwidth / 1000)}kbps` : 'unknown';
+  }
+
+  /**
+   * A plain DASH manifest over the response's own audio URLs, which Shaka
+   * fetches by byte range. This is how Android plays YouTube: InnerTubeX runs
+   * with SABR off and plays the direct URLs a client like VISIONOS returns.
+   * YouTube.js deciphers each URL (signature and n parameter) with the player
+   * script while rendering the manifest.
+   */
+  private async directManifest({ videoId, client, info }: ResolvedPlayer): Promise<string> {
+    this.useFetchPlugin();
     // BotGuard clients attach the streaming token to every media URL, as
     // InnerTubeX does on Android (`pot`, bound to the videoId).
     const pot = usesWebPo(client) ? await botguard.mint(videoId) : undefined;

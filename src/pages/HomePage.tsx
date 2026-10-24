@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { PageHeader } from '@/components/PageHeader';
 import { Shelves, TrackShelf } from '@/components/music/ShelfView';
 import { LoadError, LoadMoreError, NeedsExtension } from '@/components/music/States';
-import { useHome, useLibrary, useYouTubeReady } from '@/data/music/queries';
-import type { Track } from '@/data/music/types';
+import { useFollowed, useHome, useLibrary, useYouTubeReady } from '@/data/music/queries';
+import { countNewReleases, markReleasesSeen, readSeenReleases } from '@/data/music/seenReleases';
+import type { Shelf, Track } from '@/data/music/types';
 import { HomeSkeleton } from '@/skeletons/PageSkeletons';
 import { ShelfSkeleton } from '@/skeletons/ShelfSkeleton';
 
@@ -23,11 +24,37 @@ function useRecentlyPlayed(): Track[] {
   return first.filter((t) => !seen.has(t.videoId) && seen.add(t.videoId)).slice(0, RECENT_LIMIT);
 }
 
+/**
+ * "New from Artists You Follow": each followed artist's latest release, with how many are new
+ * since Home last showed them. Opening Home marks what it shows as seen when it is left.
+ */
+function useFollowedReleases(): Shelf | null {
+  const followed = useFollowed();
+  const releases = followed.data?.releases;
+  const ids = useMemo(() => (releases ?? []).map((r) => r.id), [releases]);
+  // What was seen before this visit; read once, so the count holds while the page is open.
+  const [seenBefore] = useState(() => readSeenReleases());
+  useEffect(() => {
+    if (!ids.length) return;
+    return () => markReleasesSeen(ids);
+  }, [ids]);
+  if (!releases?.length) return null;
+  const fresh = countNewReleases(ids, seenBefore);
+  return {
+    title: 'New from Artists You Follow',
+    strapline: fresh > 0 ? `${fresh} new since your last visit` : 'Latest from artists you follow',
+    layout: 'square',
+    items: releases,
+    seeAll: null,
+  };
+}
+
 /** YouTube Music's home feed, as Apple's Home: shelf after shelf, more as you scroll. */
 export default function HomePage() {
   const { missing } = useYouTubeReady();
   const home = useHome();
   const recent = useRecentlyPlayed();
+  const followedShelf = useFollowedReleases();
   const sentinel = useRef<HTMLDivElement>(null);
 
   // Loads the next shelves before the bottom comes into view; after a failed
@@ -68,11 +95,16 @@ export default function HomePage() {
   const shelves = home.data.pages
     .flatMap((page) => page.data)
     .filter((shelf) => !(recent.length > 0 && shelf.title.trim().toLowerCase() === RECENT_TITLE.toLowerCase()));
+  // "New from Artists You Follow" sits right under "Trending songs for you"; without that shelf it stays on top.
+  const trendingAt = shelves.findIndex((shelf) => /trending songs/i.test(shelf.title));
   return (
     <>
       <PageHeader title="Home" />
+      {followedShelf && trendingAt < 0 && <Shelves shelves={[followedShelf]} />}
       {recent.length > 0 && <TrackShelf title={RECENT_TITLE} to="/library/recent" tracks={recent} source={RECENT_SOURCE} />}
-      <Shelves shelves={shelves} />
+      <Shelves shelves={followedShelf && trendingAt >= 0 ? shelves.slice(0, trendingAt + 1) : shelves} />
+      {followedShelf && trendingAt >= 0 && <Shelves shelves={[followedShelf]} />}
+      {followedShelf && trendingAt >= 0 && <Shelves shelves={shelves.slice(trendingAt + 1)} />}
       <div ref={sentinel} />
       {home.isFetchingNextPage && <ShelfSkeleton kind="square" />}
       {home.isFetchNextPageError && <LoadMoreError onRetry={() => void home.fetchNextPage()} />}

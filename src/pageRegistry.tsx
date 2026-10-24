@@ -5,6 +5,7 @@ import {
   AlbumSkeleton,
   ArtistSkeleton,
   HomeSkeleton,
+  DiscoverSkeleton,
   NewSkeleton,
   PlainSkeleton,
   PlaylistSkeleton,
@@ -25,6 +26,7 @@ interface PageRoute {
  */
 export const pages: PageRoute[] = [
   { path: '/home', load: () => import('@/pages/HomePage'), skeleton: <HomeSkeleton /> },
+  { path: '/discover', load: () => import('@/pages/DiscoverPage'), skeleton: <DiscoverSkeleton /> },
   { path: '/new', load: () => import('@/pages/NewPage'), skeleton: <NewSkeleton /> },
   { path: '/search', load: () => import('@/pages/SearchPage'), skeleton: <SearchSkeleton /> },
   { path: '/album/:id', load: () => import('@/pages/AlbumPage'), skeleton: <AlbumSkeleton /> },

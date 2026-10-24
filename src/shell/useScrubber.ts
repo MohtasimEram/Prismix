@@ -43,7 +43,8 @@ export function useScrubber() {
       const fraction = duration > 0 ? time / duration : 0;
       element.style.setProperty('--progress', String(Math.min(1, Math.max(0, fraction))));
       if (elapsed.current) elapsed.current.textContent = clock(time);
-      if (remaining.current) remaining.current.textContent = `-${clock((duration || 0) - time)}`;
+      // A live station has no end to count down to.
+      if (remaining.current) remaining.current.textContent = Number.isFinite(duration) ? `-${clock((duration || 0) - time)}` : 'LIVE';
       if (!audio.paused || dragging !== null) frame = requestAnimationFrame(draw);
     };
     draw();

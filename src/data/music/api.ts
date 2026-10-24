@@ -218,9 +218,13 @@ function runsText(node: unknown): string {
 
 /** One library page, a page of it at a time: grids continue as grids, song lists as song lists. */
 export async function fetchLibrary(section: LibrarySection): Promise<Paged<BrowsePage>> {
+  const { title, browseId } = LIBRARY_SECTIONS[section];
+  return fetchLibraryBrowse(browseId, title);
+}
+
+async function fetchLibraryBrowse(browseId: string, title: string): Promise<Paged<BrowsePage>> {
   const yt = await getSignedInnertube();
   const { YTNodes } = await import('youtubei.js/web');
-  const { title, browseId } = LIBRARY_SECTIONS[section];
   const response = await yt.actions.execute('/browse', { browseId, client: 'YTMUSIC', parse: true });
   const memo = response.contents_memo;
   const grids = memo?.getType(YTNodes.Grid) ?? [];
@@ -272,6 +276,20 @@ export async function fetchLikeStatus(videoId: string): Promise<LikeStatus> {
 export async function setTrackLiked(videoId: string, liked: boolean): Promise<void> {
   const yt = await getSignedInnertube();
   await yt.actions.execute(liked ? '/like/like' : '/like/removelike', { target: { videoId }, client: 'YTMUSIC' });
+}
+
+/**
+ * Follows an artist (YouTube's "subscribe", which puts them in Library › Artists) or
+ * unfollows. The params are the ones YouTube Music's own artist page sends.
+ */
+export async function setArtistFollowed(channelId: string, followed: boolean): Promise<void> {
+  if (!/^UC[\w-]{10,}$/.test(channelId)) throw new Error('This artist can’t be followed');
+  const yt = await getSignedInnertube();
+  await yt.actions.execute(followed ? '/subscription/subscribe' : '/subscription/unsubscribe', {
+    channelIds: [channelId],
+    params: followed ? 'EgIIAhgA' : 'CgIIAhgA',
+    client: 'YTMUSIC',
+  });
 }
 
 /** Adds an album or playlist to the library, or removes it: YouTube saves both by liking the list. */
@@ -411,4 +429,122 @@ export async function findArtistPageId(name: string): Promise<string | null> {
   if (!normalizedArtistName(name)) return null;
   const results = await fetchSearch(name);
   return [...results.top, ...results.artists].find((item) => item.kind === 'artist' && isExactArtistMatch(item.title, name))?.id ?? null;
+}
+
+
+// ---- Discover ------------------------------------------------------------------------
+
+/** [count] random members of [list], without repeats (a partial Fisher–Yates). */
+function sample<T>(list: readonly T[], count: number): T[] {
+  const pool = [...list];
+  const picked: T[] = [];
+  while (picked.length < count && pool.length) picked.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]!);
+  return picked;
+}
+
+const MIN_SHELF_ITEMS = 3;
+
+/**
+ * Discover: music you may not have heard, built from your taste. Signed in, a few
+ * of the artists of your saved songs, and those songs, are picked at random as seeds, so each refresh
+ * finds something different:
+ * - per artist: the artists YouTube Music says fans of theirs also like (those you
+ *   already have are left out);
+ * - per song: the radio YouTube Music builds from it (the song itself and songs
+ *   already in your library are left out).
+ * YouTube Music's Explore (new albums, singles and videos) follows, and is all there
+ * is for someone not signed in. A seed that fails to load is skipped, never the page.
+ */
+export async function fetchDiscover(signedIn: boolean): Promise<Shelf[]> {
+  const personal: Shelf[] = [];
+  if (signedIn) {
+    const songsPage = await fetchLibrary('songs').catch(() => null);
+    const libraryTracks = songsPage?.data.tracks ?? [];
+    const libraryTrackIds = new Set(libraryTracks.map((t) => t.videoId));
+    // Artist seeds come from the artists of your saved songs (not the ones you follow).
+    const songArtists = new Map<string, { id: string; title: string }>();
+    for (const track of libraryTracks) {
+      for (const a of track.artists) if (a.id && !songArtists.has(a.id)) songArtists.set(a.id, { id: a.id, title: a.name });
+    }
+    const libraryArtists = [...songArtists.values()];
+    const libraryArtistIds = new Set(songArtists.keys());
+
+    const fromArtists = sample(libraryArtists, 3).map(async (artist): Promise<Shelf | null> => {
+      const page = await fetchArtist(artist.id);
+      const related = page.shelves.find((shelf) => shelf.items.some((i) => i.kind === 'artist'));
+      const items = (related?.items ?? []).filter((i) => i.kind === 'artist' && i.id !== artist.id && !libraryArtistIds.has(i.id));
+      return items.length >= MIN_SHELF_ITEMS
+        ? { title: `Because you listen to ${artist.title}`, strapline: 'Artists to try', layout: 'circle', items: items.slice(0, 14), seeAll: null }
+        : null;
+    });
+    const fromSongs = sample(libraryTracks, 2).map(async (seed): Promise<Shelf | null> => {
+      const seen = new Set<string>([seed.videoId]);
+      const items: MusicItem[] = [];
+      for (const { track, isVideo } of await fetchRadio(seed.videoId)) {
+        if (isVideo || seen.has(track.videoId) || libraryTrackIds.has(track.videoId)) continue;
+        seen.add(track.videoId);
+        items.push(songItem(track));
+      }
+      return items.length >= MIN_SHELF_ITEMS
+        ? { title: `More like “${seed.title}”`, strapline: 'Songs to try', layout: 'tracks', items: items.slice(0, 16), seeAll: null }
+        : null;
+    });
+    const settled = await Promise.allSettled([...fromArtists, ...fromSongs]);
+    for (const result of settled) if (result.status === 'fulfilled' && result.value) personal.push(result.value);
+  }
+  const explore = (await fetchExplore().catch(() => [] as Shelf[])).filter((shelf) => shelf.items.length > 0);
+  // The "Because you listen to…" artist shelves go right under "New albums & singles";
+  // the song shelves stay on top. Without that shelf, the artist shelves keep their place up front.
+  const artistShelves = personal.filter((shelf) => shelf.layout === 'circle');
+  const songShelves = personal.filter((shelf) => shelf.layout !== 'circle');
+  const newAt = explore.findIndex((shelf) => /new albums/i.test(shelf.title));
+  if (newAt < 0) return [...artistShelves, ...songShelves, ...explore];
+  return [...songShelves, ...explore.slice(0, newAt + 1), ...artistShelves, ...explore.slice(newAt + 1)];
+}
+
+
+// ---- Followed artists ----------------------------------------------------------------
+
+export interface Followed {
+  /** The artists the account follows, as the library lists them. */
+  artists: MusicItem[];
+  /** Each followed artist's latest album, single or EP from this year or last, newest first. */
+  releases: MusicItem[];
+}
+
+/** How many followed artists are checked for a new release (each is one artist page). */
+const RELEASE_SCAN = 15;
+const RELEASE_LIMIT = 20;
+const yearOf = (item: MusicItem): number => Number(/\b(19|20)\d{2}\b/.exec(item.subtitle)?.[0] ?? 0);
+
+/**
+ * The followed artists and what they released lately. YouTube Music lists a
+ * release's year but not its date, so "lately" is this year or last, and an
+ * artist contributes only their newest. An artist whose page fails to load is
+ * skipped, never the whole list.
+ */
+export async function fetchFollowed(): Promise<Followed> {
+  const page = await fetchLibrary('artists').catch(() => null);
+  // Followed artists come as a grid, or as a list that maps to shelves; either way the artist items are taken.
+  const found = [...(page?.data.grid ?? []), ...(page?.data.shelves ?? []).flatMap((shelf) => shelf.items)].filter((i) => i.kind === 'artist');
+  const artists = found.filter((a, at) => found.findIndex((b) => b.id === a.id) === at);
+  const since = new Date().getFullYear() - 1;
+  const settled = await Promise.allSettled(
+    artists.slice(0, RELEASE_SCAN).map(async (artist): Promise<MusicItem | null> => {
+      const data = await fetchArtist(artist.id);
+      let best: MusicItem | null = null;
+      for (const shelf of data.shelves) {
+        for (const item of shelf.items) {
+          if (item.kind !== 'album' || yearOf(item) < since) continue;
+          if (!best || yearOf(item) > yearOf(best)) best = item;
+        }
+      }
+      return best && { ...best, artists: best.artists.length ? best.artists : [{ name: artist.title, id: artist.id }] };
+    }),
+  );
+  const releases = settled
+    .flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value] : []))
+    .sort((a, b) => yearOf(b) - yearOf(a))
+    .slice(0, RELEASE_LIMIT);
+  return { artists, releases };
 }

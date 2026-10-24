@@ -7,7 +7,9 @@
  */
 export const LIBRARY_SECTIONS = {
   recent: { title: 'Recently Played', browseId: 'FEmusic_history' },
-  artists: { title: 'Artists', browseId: 'FEmusic_library_corpus_track_artists' },
+  // The artists the account follows (YouTube's subscriptions), not the artists of its saved songs
+  // (FEmusic_library_corpus_track_artists); following is done from an artist's page.
+  artists: { title: 'Artists', browseId: 'FEmusic_library_corpus_artists' },
   albums: { title: 'Albums', browseId: 'FEmusic_liked_albums' },
   songs: { title: 'Songs', browseId: 'FEmusic_liked_videos' },
   'made-for-you': { title: 'Made for You', browseId: 'FEmusic_mixed_for_you' },

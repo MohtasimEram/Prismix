@@ -6,6 +6,7 @@ import {
   AlbumsIcon,
   AllPlaylistsIcon,
   ArtistsIcon,
+  DiscoverIcon,
   HomeIcon,
   MadeForYouIcon,
   NewIcon,
@@ -36,6 +37,7 @@ interface NavItem {
 const PRIMARY: NavItem[] = [
   { to: '/search', label: 'Search', Icon: SearchIcon },
   { to: '/home', label: 'Home', Icon: HomeIcon },
+  { to: '/discover', label: 'Discover', Icon: DiscoverIcon },
   { to: '/new', label: 'New', Icon: NewIcon },
 ];
 

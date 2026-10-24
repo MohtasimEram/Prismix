@@ -17,7 +17,9 @@ import {
   fetchArtist,
   fetchBrowse,
   fetchCategories,
+  fetchDiscover,
   fetchExplore,
+  fetchFollowed,
   fetchHome,
   fetchLibrary,
   fetchLibraryPlaylists,
@@ -26,13 +28,14 @@ import {
   fetchPlaylistOptions,
   fetchSearch,
   fetchSuggestions,
+  setArtistFollowed,
   setListSaved,
   setTrackLiked,
   type LikeStatus,
   type Paged,
 } from './api';
 import { isLibrarySection, LIKED_MUSIC_PLAYLIST, type LibrarySection } from './library';
-import type { AlbumPage, BrowseLink, BrowsePage, HeaderInfo, PlaylistPage, Shelf, Track } from './types';
+import type { AlbumPage, ArtistPage, BrowseLink, BrowsePage, HeaderInfo, PlaylistPage, Shelf, Track } from './types';
 
 // TanStack Query for every browse request (prompt §1: caching, dedupe,
 // retries). YouTube requests need the extension, so every query waits for it;
@@ -105,6 +108,17 @@ export function useArtist(id: string) {
 export function useExplore() {
   const { ready } = useYouTubeReady();
   return useQuery({ ...exploreQuery(), enabled: ready });
+}
+/** Discover: picks built from the library when signed in, else Explore. A refetch picks new seeds. */
+export function useDiscover() {
+  const { ready } = useYouTubeReady();
+  const signedIn = useSignedIn();
+  return useQuery({
+    queryKey: ['music', 'discover', signedIn],
+    queryFn: () => fetchDiscover(signedIn),
+    enabled: ready,
+    staleTime: 30 * 60_000,
+  });
 }
 export function useCategories() {
   const { ready } = useYouTubeReady();
@@ -194,6 +208,34 @@ export function useLibraryPlaylists() {
     queryFn: fetchLibraryPlaylists,
     enabled: signedIn,
     staleTime: 2 * 60_000,
+  });
+}
+
+/** The artists the account follows and their latest releases (Home and Discover). */
+export function useFollowed() {
+  const signedIn = useSignedIn();
+  const { ready } = useYouTubeReady();
+  return useQuery({
+    queryKey: ['music', 'followed'],
+    queryFn: fetchFollowed,
+    enabled: signedIn && ready,
+    staleTime: 15 * 60_000,
+  });
+}
+
+/** Follow or unfollow an artist, shown at once on their page and put back if YouTube refuses. */
+export function useSetArtistFollowed() {
+  const mark = (artistId: string, subscribed: boolean | null) =>
+    queryClient.setQueryData<ArtistPage>(['music', 'artist', artistId], (page) => page && { ...page, subscribed });
+  return useMutation({
+    mutationFn: ({ channelId, followed }: { artistId: string; channelId: string; followed: boolean }) => setArtistFollowed(channelId, followed),
+    onMutate: ({ artistId, followed }) => mark(artistId, followed),
+    onError: (_error, { artistId, followed }) => mark(artistId, !followed),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['music', 'followed'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'discover'] });
+    },
   });
 }
 

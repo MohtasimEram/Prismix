@@ -62,6 +62,11 @@ export class UnplayableError extends Error {
   }
 }
 
+/** Whether the response is a live stream that plays from its HLS manifest. */
+export function isLiveStream(info: YT.VideoInfo): boolean {
+  return !!info.basic_info.is_live && !!info.streaming_data?.hls_manifest_url;
+}
+
 /** A client answered OK, with a stream to play (direct URLs, a SABR URL, or both). */
 export interface ResolvedPlayer {
   videoId: string;
@@ -229,7 +234,9 @@ export async function resolvePlayer(
       const status = info.playability_status?.status;
       const ms = Math.round(performance.now() - started);
       const streaming = info.streaming_data;
-      const playable = !!streaming?.server_abr_streaming_url || !!streaming?.adaptive_formats.some((f) => f.has_audio && !f.has_video);
+      // A live stream (a 24/7 station) has neither SABR nor separate audio renditions, only an HLS manifest.
+      const playable =
+        !!streaming?.server_abr_streaming_url || !!streaming?.adaptive_formats.some((f) => f.has_audio && !f.has_video) || isLiveStream(info);
       if (status === 'OK' && playable) {
         trackLog.d(`${client}${signed ? ' (signed in)' : ''} answered OK in ${ms}ms`, videoId);
         return { videoId, client, info, yt, signed };

@@ -32,6 +32,17 @@ export function NewSkeleton() {
   );
 }
 
+export function DiscoverSkeleton() {
+  return (
+    <div aria-busy="true">
+      <PageHeader title="Discover" />
+      <ShelfSkeleton kind="circle" />
+      <ShelfSkeleton kind="tracks" />
+      <ShelfSkeleton kind="square" />
+    </div>
+  );
+}
+
 export function SearchSkeleton() {
   return (
     <div aria-busy="true">

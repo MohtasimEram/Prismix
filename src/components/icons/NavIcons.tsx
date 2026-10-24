@@ -31,6 +31,13 @@ export const HomeIcon = make([
   },
 ]);
 
+export const DiscoverIcon = make([
+  {
+    fillOpacity: 0.95,
+    d: 'M12 4a8 8 0 1 0 0 16 8 8 0 1 0 0-16zM12 5.4a6.6 6.6 0 1 1 0 13.2 6.6 6.6 0 1 1 0-13.2zM15.9 8.1l-2.2 5.6-5.6 2.2 2.2-5.6z',
+  },
+]);
+
 export const NewIcon = make([
   {
     fillOpacity: 0.95,

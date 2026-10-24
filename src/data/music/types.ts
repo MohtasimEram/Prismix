@@ -116,6 +116,10 @@ export interface ArtistPage {
   topSongs: Track[];
   topSongsSeeAll: BrowseLink | null;
   shelves: Shelf[];
+  /** The channel Follow acts on (null when YouTube gives the page no follow button). */
+  channelId: string | null;
+  /** Whether the signed-in account follows the artist; null when that isn't known (signed out). */
+  subscribed: boolean | null;
 }
 
 export interface HomePage {

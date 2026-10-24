@@ -60,7 +60,12 @@ export default function LibraryPage() {
   return (
     <>
       <PageHeader title={title} />
-      {!grid.length && !tracks.length && <EmptyState title="Nothing here yet" />}
+      {!grid.length && !tracks.length && (
+        <EmptyState
+          title={section === 'artists' ? 'You don’t follow any artists yet' : 'Nothing here yet'}
+          detail={section === 'artists' ? 'Open an artist’s page and press Follow. They’ll show up here, and their new releases on Home.' : undefined}
+        />
+      )}
       {grid.length > 0 && (
         <ul className={seeAllGrid} data-wide={grid.every((i) => i.wide) || undefined}>
           {grid.map((item, i) => (

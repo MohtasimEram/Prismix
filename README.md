@@ -29,6 +29,36 @@ app (Tauri + Rust), not a browser tab, so it has a tray icon, media keys, native
 > [BitChord](https://github.com/kushagrasinghx/BitChord) mobile app. **Listen Together works seamlessly between
 > Prismix and BitChord**, so friends on the phone app and friends on the desktop can listen in the same room.
 
+## 📸 Screenshots
+
+<!--
+  HOW TO ADD SCREENSHOTS:
+  1. Save your screenshots in docs/screenshots/ with these names (or change the names below).
+  2. Remove the first line of this comment (the one that opens it) and the last line
+     (the one that closes it, just under the table) so the table shows up.
+
+<div align="center">
+<table>
+  <tr>
+    <td><img src="docs/screenshots/home.png" alt="Home" /></td>
+    <td><img src="docs/screenshots/now-playing.png" alt="Now Playing with synced lyrics" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Home</sub></td>
+    <td align="center"><sub>Now Playing &amp; synced lyrics</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/discover.png" alt="Discover" /></td>
+    <td><img src="docs/screenshots/search.png" alt="Search with Songs and Videos tabs" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Discover</sub></td>
+    <td align="center"><sub>Search</sub></td>
+  </tr>
+</table>
+</div>
+-->
+
 ## 🎧 Features
 
 **Listening**
@@ -42,6 +72,9 @@ app (Tauri + Rust), not a browser tab, so it has a tray icon, media keys, native
 - Optional **music-video playback**: videos play as audio by default, and one button switches to watching
 
 **Library & search**
+- **Follow artists** from their pages; their latest releases appear on Home (with a "new since your last visit" count) and in Discover
+- **Discover** tab with new artists and songs picked from your own library, plus what's new on YouTube Music
+- **Live stations**: 24/7 YouTube Music stations play right from Home
 - Sign in to see your YouTube Music library, playlists and favourites
 - Search with tabs for **Songs, Videos, Albums, Artists, Playlists**
 - **Pin playlists** to the top of the sidebar, each with its cover art
