@@ -1,10 +1,11 @@
-import { Search, X } from 'lucide-react';
+import { Pause, Play, Search, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useSuggestions } from '@/data/music/queries';
 import type { MusicItem } from '@/data/music/types';
 import { Artwork } from './Artwork';
 import { hrefFor } from './links';
+import { usePlayer } from '@/state/player';
 import { playTrack } from './play';
 
 type Option = { kind: 'query'; text: string; typed: string; rest: string } | { kind: 'item'; item: MusicItem };
@@ -124,22 +125,23 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
                 <>
                   <Search size={13} strokeWidth={2.4} aria-hidden="true" />
                   <span className="truncate">
-                    <span className="text-primary group-data-active/option:text-white">{option.typed}</span>
+                    <span className="text-primary">{option.typed}</span>
                     <span>{option.rest}</span>
                   </span>
                 </>
               ) : (
                 <>
-                  <div className="w-[46px]">
+                  <div className="relative w-[46px]">
                     <Artwork
                       src={option.item.thumbnail}
                       displayWidth={46}
                       radius={option.item.kind === 'artist' ? '50%' : 'var(--radius-artwork-small)'}
                     />
+                    {isPlayable(option.item.kind) && <PlayBadge item={option.item} />}
                   </div>
                   <div className="flex min-w-0 flex-col">
                     <span className="truncate type-body">{option.item.title}</span>
-                    <span className="mt-px truncate type-callout text-secondary group-data-active/option:text-white">{option.item.subtitle || kindLabel(option.item.kind)}</span>
+                    <span className="mt-px truncate type-callout text-secondary">{option.item.subtitle || kindLabel(option.item.kind)}</span>
                   </div>
                 </>
               )}
@@ -151,10 +153,39 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
   );
 }
 
-// A suggestion row; hover or keyboard selection paints it in the key colour, white text.
-const optionRow = 'group/option mx-1.5 cursor-default rounded-[3px] data-active:bg-key-bg data-active:text-white';
+// A suggestion row; hover or keyboard selection lays a soft translucent fill over the glass.
+const optionRow = 'group/option mx-1.5 cursor-default rounded-[6px] transition-colors duration-100 data-active:bg-quaternary';
 const hint = `${optionRow} grid grid-cols-[16px_minmax(0,1fr)] items-center p-1 type-body text-secondary`;
 const lockup = `${optionRow} mt-1.5 grid grid-cols-[46px_minmax(0,1fr)] items-center gap-x-2.5 p-1.5`;
+
+/**
+ * The play badge on a song's cover: plays it, or pauses it while it is the one playing, and the
+ * suggestions stay open (a click here is not a pick). Shown while the row is hovered or selected.
+ */
+function PlayBadge({ item }: { item: MusicItem }) {
+  const current = usePlayer((s) => s.nowPlaying?.videoId === item.id);
+  const status = usePlayer((s) => s.status);
+  const active = current && (status === 'playing' || status === 'loading' || status === 'buffering');
+  const Icon = active ? Pause : Play;
+  return (
+    <button
+      type="button"
+      tabIndex={-1}
+      aria-label={active ? `Pause ${item.title}` : `Play ${item.title}`}
+      className="absolute inset-0 grid place-items-center rounded-[var(--radius-artwork-small)] bg-black/45 opacity-0 transition-opacity duration-150 group-data-active/option:opacity-100"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (current) usePlayer.getState().togglePlay();
+        else playTrack(item);
+      }}
+    >
+      <Icon size={18} fill="currentColor" strokeWidth={0} className="text-white" aria-hidden="true" />
+    </button>
+  );
+}
+
+/** Songs and videos play when picked; the rest open a page. */
+const isPlayable = (kind: MusicItem['kind']) => kind === 'song' || kind === 'video' || kind === 'episode';
 
 function kindLabel(kind: MusicItem['kind']): string {
   return { song: 'Song', video: 'Video', album: 'Album', playlist: 'Playlist', 'spotify-playlist': 'Spotify Playlist', artist: 'Artist', episode: 'Episode', podcast: 'Podcast', unknown: '' }[kind];

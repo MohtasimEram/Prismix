@@ -31,6 +31,12 @@ app (Tauri + Rust), not a browser tab, so it has a tray icon, media keys, native
 
 ## 📸 Screenshots
 
+<!--
+  HOW TO ADD SCREENSHOTS:
+  1. Save your screenshots in docs/screenshots/ with these names (or change the names below).
+  2. Remove the first line of this comment (the one that opens it) and the last line
+     (the one that closes it, just under the table) so the table shows up.
+
 <div align="center">
 <table>
   <tr>
@@ -51,6 +57,7 @@ app (Tauri + Rust), not a browser tab, so it has a tray icon, media keys, native
   </tr>
 </table>
 </div>
+-->
 
 ## 🎧 Features
 
@@ -127,6 +134,10 @@ your own risk and respect the rights of artists and rights holders.
 - Prismix draws its inspiration from the **BitChord** app by [kushagrasinghx](https://github.com/kushagrasinghx/BitChord),
   and shares its Listen Together protocol so the two apps can join the same rooms.
   Please check that project's licence and keep its credit.
+
+## 📄 Licence
+
+Released under the MIT licence (see `Cargo.toml`). Add a `LICENSE` file with your name before publishing.
 
 <div align="center">
 <br/>
