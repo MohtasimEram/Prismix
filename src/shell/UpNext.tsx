@@ -1,5 +1,5 @@
 import { party, useParty } from '@/party/listenTogether';
-import { Infinity as InfinityIcon, MoreHorizontal } from 'lucide-react';
+import { Infinity as InfinityIcon, MoreHorizontal, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { Menu, MenuHeader, MenuItem, MenuSeparator } from '@/components/Menu';
 import { PrefetchLink } from '@/components/PrefetchLink';
@@ -142,7 +142,7 @@ function Row({
 }
 
 /** Apple's Up Next (report §7), over the three-tier queue: what's next, then AutoPlay's section. */
-export function UpNext() {
+export function UpNext({ onClose }: { onClose?: (() => void) | undefined } = {}) {
   const queue = usePlayer((s) => s.queue);
   const index = usePlayer((s) => s.index);
   const localAutoplay = usePlayer((s) => s.autoplay);
@@ -211,6 +211,11 @@ export function UpNext() {
               </MenuItem>
             ))}
           </Menu>
+        )}
+        {onClose && (
+          <button className={square} aria-label="Close Up Next" title="Close" onClick={onClose}>
+            <X size={16} strokeWidth={2.2} />
+          </button>
         )}
       </div>
       {playingFrom && <p className="truncate px-5 pb-2 type-callout text-secondary">Playing from {playingFrom}</p>}

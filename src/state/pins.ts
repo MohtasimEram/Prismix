@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { moveKey } from './playlistOrder';
 
 /**
  * Pinned playlists: kept at the top of the sidebar, in the order they were
@@ -38,6 +39,8 @@ interface PinsState {
   /** Pins the playlist, or unpins it when it already is. A pin's title and cover are refreshed when seen again. */
   toggle: (pin: Pin) => void;
   refresh: (pin: Pin) => void;
+  /** Puts the pin [from] before or after the pin [to]. */
+  move: (from: string, to: string, after: boolean) => void;
 }
 
 export const usePins = create<PinsState>()((set) => ({
@@ -48,6 +51,14 @@ export const usePins = create<PinsState>()((set) => ({
         ? { pins: s.pins.filter((p) => p.key !== pin.key) }
         : { pins: [...s.pins, pin].slice(-MAX_PINS) },
     ),
+  move: (from, to, after) =>
+    set((s) => {
+      const keys = s.pins.map((p) => p.key);
+      const moved = moveKey(keys, from, to, after);
+      if (moved.every((key, i) => key === keys[i])) return s;
+      const byKey = new Map(s.pins.map((p) => [p.key, p] as const));
+      return { pins: moved.map((key) => byKey.get(key)!) };
+    }),
   refresh: (pin) =>
     set((s) => {
       const current = s.pins.find((p) => p.key === pin.key);

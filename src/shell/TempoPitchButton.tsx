@@ -1,4 +1,4 @@
-import { Gauge } from 'lucide-react';
+import { Gauge, RotateCcw } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PITCH_LIMITS, TEMPO_LIMITS, useTempoPitch } from '@/playback/audioFx';
@@ -104,129 +104,103 @@ function Chips({ options, current, onPick }: { options: { value: number; label: 
 }
 
 /**
- * The player bar's tempo and pitch control: a button that opens a small panel
- * with both sliders. Tempo keeps the key and pitch keeps the speed
- * (playback/audioFx.ts), so moving one never bends the other.
+ * The tempo and pitch panel: a small dialog above [anchor] with both sliders.
+ * Tempo keeps the key and pitch keeps the speed (playback/audioFx.ts), so
+ * moving one never bends the other. Opened from the player bar's ⋮ menu.
  */
-export function TempoPitchButton({ className }: { className?: string }) {
+export function TempoPitchPanel({ anchor, onClose }: { anchor: HTMLElement; onClose: () => void }) {
   const { tempo, pitch, setTempo, setPitch, reset } = useTempoPitch();
   const changed = tempo !== 1 || pitch !== 0;
-  const [open, setOpen] = useState(false);
-  const button = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<React.CSSProperties>({ visibility: 'hidden' });
 
   useLayoutEffect(() => {
-    if (!open || !button.current) return;
-    const rect = button.current.getBoundingClientRect();
+    const rect = anchor.getBoundingClientRect();
     setPosition({
       right: Math.max(8, window.innerWidth - rect.right - 8),
       bottom: window.innerHeight - rect.top + 10,
     });
-  }, [open]);
+  }, [anchor]);
 
   useEffect(() => {
-    if (!open) return;
+    panel.current?.focus({ preventScroll: true });
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.stopPropagation();
-        setOpen(false);
-        button.current?.focus();
+        onClose();
+        anchor.focus();
       }
     };
     const onDown = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (!panel.current?.contains(target) && !button.current?.contains(target)) setOpen(false);
+      if (!panel.current?.contains(target) && !anchor.contains(target)) onClose();
     };
-    const close = () => setOpen(false);
     document.addEventListener('keydown', onKey, true);
     document.addEventListener('pointerdown', onDown, true);
-    window.addEventListener('resize', close);
+    window.addEventListener('resize', onClose);
     return () => {
       document.removeEventListener('keydown', onKey, true);
       document.removeEventListener('pointerdown', onDown, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('resize', onClose);
     };
-  }, [open]);
+  }, [anchor, onClose]);
 
-  return (
-    <>
-      <button
-        ref={button}
-        className={className}
-        aria-label="Tempo and Pitch"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-pressed={changed}
-        title={changed ? `Tempo ${formatTempo(tempo)}, pitch ${formatPitch(pitch)}` : 'Tempo and Pitch'}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <Gauge size={18} strokeWidth={2.2} />
-      </button>
-      {open &&
-        createPortal(
-          <div
-            ref={panel}
-            role="dialog"
-            aria-label="Tempo and Pitch"
-            className="fixed z-(--z-contextual-menus) w-[296px] animate-menu-in rounded-[12px] bg-thick-material p-4 shadow-[0_0_0_0.5px_var(--vibrantDivider),0_10px_40px_var(--glassMaterialShadowColor)] [backdrop-filter:saturate(2.2)_blur(32px)]"
-            style={position}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <span className="flex items-center gap-2 type-title-3-emphasized text-primary">
-                <Gauge size={16} strokeWidth={2.2} className="text-secondary" aria-hidden="true" />
-                Tempo &amp; Pitch
-              </span>
-              <button
-                className="rounded-[10px] bg-quaternary px-2.5 py-[2px] type-callout-emphasized text-primary transition-opacity hover:bg-tertiary disabled:opacity-40 disabled:hover:bg-quaternary"
-                disabled={!changed}
-                onClick={reset}
-              >
-                Reset
-              </button>
-            </div>
+  return createPortal(
+    <div
+      ref={panel}
+      tabIndex={-1}
+      role="dialog"
+      aria-label="Tempo and Pitch"
+      className="fixed z-(--z-contextual-menus) w-[296px] animate-menu-in rounded-[12px] bg-thick-material p-4 shadow-[0_0_0_0.5px_var(--vibrantDivider),0_10px_40px_var(--glassMaterialShadowColor)] outline-none [backdrop-filter:saturate(2.2)_blur(32px)]"
+      style={position}
+    >
+      <div className="mb-4 flex items-center justify-between">
+        <span className="flex items-center gap-2 type-title-3-emphasized text-primary">
+          <Gauge size={16} strokeWidth={2.2} className="text-secondary" aria-hidden="true" />
+          Tempo &amp; Pitch
+        </span>
+        {/* Styled as the sidebar's Create Playlist button. */}
+        <button
+          type="button"
+          className="group/reset inline-flex h-6 items-center gap-1 rounded-pill bg-quaternary pr-2.5 pl-1.5 type-callout-emphasized text-primary transition-colors duration-150 ease-out enabled:hover:bg-quinary disabled:opacity-40"
+          aria-label="Reset tempo and pitch"
+          title="Reset tempo and pitch"
+          disabled={!changed}
+          onClick={reset}
+        >
+          <RotateCcw size={14} strokeWidth={2.2} className="text-secondary transition-colors duration-150 ease-out group-enabled/reset:group-hover/reset:text-primary" />
+          <span>Reset</span>
+        </button>
+      </div>
 
-            <ControlSection
-              label="Tempo"
-              value={formatTempo(tempo)}
-              modified={tempo !== 1}
-              onReset={() => setTempo(1)}
-            >
-              <Slider
-                label="Tempo"
-                min={TEMPO_LIMITS.min}
-                max={TEMPO_LIMITS.max}
-                step={TEMPO_LIMITS.step}
-                value={tempo}
-                origin={1}
-                onChange={setTempo}
-              />
-              <Chips options={TEMPO_CHOICES.map((v) => ({ value: v, label: formatTempo(v) }))} current={tempo} onPick={setTempo} />
-            </ControlSection>
+      <ControlSection label="Tempo" value={formatTempo(tempo)} modified={tempo !== 1} onReset={() => setTempo(1)}>
+        <Slider
+          label="Tempo"
+          min={TEMPO_LIMITS.min}
+          max={TEMPO_LIMITS.max}
+          step={TEMPO_LIMITS.step}
+          value={tempo}
+          origin={1}
+          onChange={setTempo}
+        />
+        <Chips options={TEMPO_CHOICES.map((v) => ({ value: v, label: formatTempo(v) }))} current={tempo} onPick={setTempo} />
+      </ControlSection>
 
-            <ControlSection
-              label="Pitch"
-              value={formatPitch(pitch)}
-              modified={pitch !== 0}
-              onReset={() => setPitch(0)}
-              className="mt-4"
-            >
-              <Slider
-                label="Pitch in semitones"
-                min={PITCH_LIMITS.min}
-                max={PITCH_LIMITS.max}
-                step={PITCH_LIMITS.step}
-                value={pitch}
-                origin={0}
-                onChange={setPitch}
-              />
-              <Chips options={PITCH_CHOICES.map((v) => ({ value: v, label: v === 0 ? '0' : `${v > 0 ? '+' : ''}${v}` }))} current={pitch} onPick={setPitch} />
-            </ControlSection>
+      <ControlSection label="Pitch" value={formatPitch(pitch)} modified={pitch !== 0} onReset={() => setPitch(0)} className="mt-4">
+        <Slider
+          label="Pitch in semitones"
+          min={PITCH_LIMITS.min}
+          max={PITCH_LIMITS.max}
+          step={PITCH_LIMITS.step}
+          value={pitch}
+          origin={0}
+          onChange={setPitch}
+        />
+        <Chips options={PITCH_CHOICES.map((v) => ({ value: v, label: v === 0 ? '0' : `${v > 0 ? '+' : ''}${v}` }))} current={pitch} onPick={setPitch} />
+      </ControlSection>
 
-            <p className="mt-4 type-caption-2 text-tertiary">Tempo keeps the key. Pitch keeps the speed. Double-click a slider to reset it.</p>
-          </div>,
-          document.body,
-        )}
-    </>
+      <p className="mt-4 type-caption-2 text-tertiary">Tempo keeps the key. Pitch keeps the speed. Double-click a slider to reset it.</p>
+    </div>,
+    document.body,
   );
 }

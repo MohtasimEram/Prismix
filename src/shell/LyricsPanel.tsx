@@ -1,6 +1,6 @@
 // Registers <am-lyrics>.
 import '@uimaxbai/am-lyrics/am-lyrics.js';
-import { Check, ChevronDown, Loader2, Minus, Settings2 } from 'lucide-react';
+import { Check, ChevronDown, Loader2, Minus, Settings2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useCanvas } from '@/data/spotify/canvas';
 import { getBridge } from '@/extension/bridge';
@@ -276,7 +276,7 @@ function useUngranted(): string[] {
 const NO_STATES: Partial<Record<LyricsSourceId, SourceState>> = {};
 
 /** The provider picker: which provider these lyrics are from, and the others' answers for this track. */
-function ProviderPicker({ current, full }: { current: LyricsSourceId | null; full: boolean }) {
+function ProviderPicker({ current, full, onClose }: { current: LyricsSourceId | null; full: boolean; onClose?: (() => void) | undefined }) {
   const videoId = usePlayer((s) => s.nowPlaying?.videoId ?? '');
   const states = useLyricsUi((s) => s.states[videoId]) ?? NO_STATES;
   const picked = useLyricsUi((s) => s.picked[videoId]);
@@ -303,13 +303,25 @@ function ProviderPicker({ current, full }: { current: LyricsSourceId | null; ful
         <span>{label}</span>
         <ChevronDown size={14} />
       </button>
-      <button
-        className="grid size-7 place-items-center rounded-[8px] text-secondary hover:bg-quinary"
-        aria-label="Lyric settings"
-        onClick={() => setSettings(true)}
-      >
-        <Settings2 size={16} />
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          className="grid size-7 place-items-center rounded-[8px] text-secondary hover:bg-quinary"
+          aria-label="Lyric settings"
+          onClick={() => setSettings(true)}
+        >
+          <Settings2 size={16} />
+        </button>
+        {onClose && (
+          <button
+            className="grid size-7 place-items-center rounded-[8px] text-secondary hover:bg-quinary"
+            aria-label="Close Lyrics"
+            title="Close"
+            onClick={onClose}
+          >
+            <X size={16} strokeWidth={2.2} />
+          </button>
+        )}
+      </div>
       {anchor && (
         <Menu anchor={anchor} placement="below-end" onClose={close} label="Lyrics provider">
           <MenuItem checked={!picked} onSelect={() => (close(), pick(videoId, null))}>
@@ -414,7 +426,7 @@ const fullSizes =
  * (report §7), and the right-hand column of the full-screen player, where the
  * lines are larger and the player's mesh stands in for the Canvas.
  */
-export function LyricsPanel({ variant = 'panel' }: { variant?: 'panel' | 'full' }) {
+export function LyricsPanel({ variant = 'panel', onClose }: { variant?: 'panel' | 'full'; onClose?: (() => void) | undefined }) {
   const lyrics = useLyrics();
   const hasTrack = usePlayer((s) => s.nowPlaying !== null);
   const ungranted = useUngranted();
@@ -430,7 +442,7 @@ export function LyricsPanel({ variant = 'panel' }: { variant?: 'panel' | 'full' 
   return (
     <div className={full ? `${panel} ${fullSizes}` : panel}>
       {canvas && variant === 'panel' && <CanvasBackdrop url={canvas} />}
-      <ProviderPicker current={result?.source ?? null} full={full} />
+      <ProviderPicker current={result?.source ?? null} full={full} onClose={onClose} />
       {/* Only worth raising when nothing was found: then the hosts behind the extension might have it. */}
       {ungranted.length > 0 && !result && !lyrics.isFetching && <PermissionNotice origins={ungranted} />}
       {!hasTrack ? (

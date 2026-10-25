@@ -2,7 +2,7 @@ import { Check } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-export type MenuPlacement = 'above-start' | 'below-end';
+export type MenuPlacement = 'above-start' | 'above-end' | 'below-end';
 
 interface MenuProps {
   /** The element the menu opens from. */
@@ -28,6 +28,8 @@ export function Menu({ anchor, placement = 'below-end', onClose, label, children
     setPosition(
       placement === 'above-start'
         ? { left: Math.max(8, rect.left), bottom: window.innerHeight - rect.top + gap, maxHeight: rect.top - 2 * gap }
+        : placement === 'above-end'
+        ? { right: Math.max(8, window.innerWidth - rect.right), bottom: window.innerHeight - rect.top + gap, maxHeight: rect.top - 2 * gap }
         : {
             right: Math.max(8, window.innerWidth - rect.right),
             top: rect.bottom + gap,

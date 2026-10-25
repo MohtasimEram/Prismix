@@ -15,6 +15,7 @@ export function SidePanel() {
   const fullScreen = useUi((s) => s.fullScreen);
   const reduced = useReducedMotion();
   const open = !!panel && !fullScreen;
+  const closePanel = useUi((s) => s.closeSidePanel);
   const width = useLayout((s) => s.sidePanelWidth);
   const setWidth = useLayout((s) => s.setSidePanelWidth);
 
@@ -49,10 +50,10 @@ export function SidePanel() {
               exit={{ opacity: 0, transition: { duration: 0.1 } }}
             >
               {panel === 'up-next' ? (
-                <UpNext />
+                <UpNext onClose={closePanel} />
               ) : (
                 <Suspense fallback={null}>
-                  <LyricsPanel />
+                  <LyricsPanel onClose={closePanel} />
                 </Suspense>
               )}
             </motion.div>

@@ -19,9 +19,7 @@ import { usePlayer } from '@/state/player';
 import { useUi } from '@/state/ui';
 import { Lcd } from './Lcd';
 import { AddToPlaylistButton } from './AddToPlaylistButton';
-import { DownloadButton } from './DownloadButton';
-import { WatchVideoButton } from './WatchVideoButton';
-import { TempoPitchButton } from './TempoPitchButton';
+import { PlayerMoreMenu } from './PlayerMoreMenu';
 
 const control = 'grid place-items-center rounded-[6px] disabled:opacity-40';
 // Shuffle and repeat: secondary, and the key colour when on, as Apple's toggles.
@@ -32,7 +30,7 @@ const action = 'grid h-7 w-6 place-items-center rounded-[4px] text-primary aria-
 const fading = `${action} transition-opacity group-data-volume-open/actions:pointer-events-none group-data-volume-open/actions:opacity-0`;
 
 const slider = [
-  'absolute top-1/2 right-[33px] mx-0 mb-0 -mt-2 block h-4 w-24 cursor-pointer appearance-none bg-transparent',
+  'absolute top-1/2 right-[66px] mx-0 mb-0 -mt-2 block h-4 w-24 cursor-pointer appearance-none bg-transparent',
   'pointer-events-none translate-x-2 opacity-0 transition-[opacity,translate]',
   'data-open:pointer-events-auto data-open:translate-none data-open:opacity-100',
   '[&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:rounded-[2px] [&::-webkit-slider-runnable-track]:bg-[linear-gradient(to_right,var(--systemPrimary)_var(--fill),var(--systemQuaternary)_var(--fill))]',
@@ -141,7 +139,7 @@ export function PlayerBar() {
           </button>
         </div>
 
-        <div className="h-full min-w-0 px-2 mr-5">
+        <div className="h-full min-w-0 px-2 mr-2">
           <Lcd />
         </div>
 
@@ -155,8 +153,6 @@ export function PlayerBar() {
         >
           <FavoriteButton videoId={videoId} className={fading} />
           <AddToPlaylistButton videoId={videoId} className={fading} />
-          <DownloadButton className={fading} />
-          <WatchVideoButton className={fading} />
           {hasLyrics && (
             <button
               className={fading}
@@ -168,7 +164,6 @@ export function PlayerBar() {
               {sidePanel === 'lyrics' ? <LyricsActiveIcon size={18} /> : <LyricsIcon size={18} />}
             </button>
           )}
-          <TempoPitchButton className={fading} />
           <button
             className={fading}
             aria-label="Up Next"
@@ -179,6 +174,8 @@ export function PlayerBar() {
             <UpNextIcon size={18} />
           </button>
           <VolumeControl open={volumeOpen} onOpen={() => setVolumeOpen(true)} />
+          {/* Last in the row and always visible: the volume level slides in over the buttons to its left. */}
+          <PlayerMoreMenu className={action} onActivate={() => setVolumeOpen(false)} />
         </div>
       </motion.div>
     </div>

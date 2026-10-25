@@ -25,6 +25,7 @@ import { droppedTrack, isPrismixTrackDrag, useDragTrack } from '@/state/dragTrac
 import { useSpotifyPlaylists } from '@/data/spotify/queries';
 import { useSpotifySignedIn } from '@/extension/useSpotifyAuth';
 import { SIDEBAR_LIMITS, useLayout } from '@/state/layout';
+import { PLAYLIST_MIME, sortByOrder, usePlaylistDrag, usePlaylistOrder } from '@/state/playlistOrder';
 import { spotifyPinKey, usePins, ytmPinKey, type Pin as PinData } from '@/state/pins';
 import { useUi } from '@/state/ui';
 import { Resizer } from './Resizer';
@@ -104,11 +105,31 @@ const ytmPlaylistId = (pin: PinData): string | null => (pin.key.startsWith('ytm:
  * add it; the row lights up while one is over it and confirms (or says it
  * failed) afterwards.
  */
-function PlaylistRow({ pin, pinned, onNavigate }: { pin: PinData; pinned: boolean; onNavigate: () => void }) {
+function PlaylistRow({
+  pin,
+  pinned,
+  section,
+  onReorder,
+  onNudge,
+  onNavigate,
+}: {
+  pin: PinData;
+  pinned: boolean;
+  /** Rows only trade places within their section (pinned, YouTube Music, Spotify). */
+  section: string;
+  onReorder: (from: string, to: string, after: boolean) => void;
+  onNudge: (key: string, direction: -1 | 1) => void;
+  onNavigate: () => void;
+}) {
   const toggle = usePins((s) => s.toggle);
   const playlistId = ytmPlaylistId(pin);
   const add = useAddToPlaylist();
   const dragging = useDragTrack((s) => s.track !== null);
+  // Reordering: this row being dragged, and the line where a drop on it would land.
+  const beingMoved = usePlaylistDrag((s) => s.key === pin.key);
+  const dropLine = usePlaylistDrag((s) =>
+    s.over?.key === pin.key && s.key !== pin.key && s.section === section ? (s.over.after ? 'after' : 'before') : null,
+  );
   const [over, setOver] = useState(false);
   const [result, setResult] = useState<'added' | 'failed' | null>(null);
   const resultTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -125,8 +146,38 @@ function PlaylistRow({ pin, pinned, onNavigate }: { pin: PinData; pinned: boolea
   };
   return (
     <li
-      className="group/row relative"
+      className={`group/row relative${beingMoved ? ' opacity-40' : ''}`}
+      data-playlist-key={pin.key}
+      onKeyDown={(event) => {
+        // Alt + ↑ / ↓ moves the focused playlist, for those who don't drag.
+        if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+        event.preventDefault();
+        onNudge(pin.key, event.key === 'ArrowUp' ? -1 : 1);
+        requestAnimationFrame(() => {
+          const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-playlist-key]'));
+          rows.find((row) => row.dataset.playlistKey === pin.key)?.querySelector<HTMLElement>('a')?.focus();
+        });
+      }}
+      onDragStart={(event) => {
+        // A playlist row dragged to a new place; the link's own URL payload is replaced.
+        event.dataTransfer.clearData();
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData(PLAYLIST_MIME, pin.key);
+        event.dataTransfer.setData('text/plain', pin.title.slice(0, 200));
+        // After the browser has taken its drag image: restyling the row any sooner can cancel the drag.
+        setTimeout(() => usePlaylistDrag.getState().start(pin.key, section), 0);
+      }}
       onDragOver={(event) => {
+        const move = usePlaylistDrag.getState();
+        if (move.key !== null && event.dataTransfer.types.includes(PLAYLIST_MIME)) {
+          if (move.section !== section) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = 'move';
+          const rect = event.currentTarget.getBoundingClientRect();
+          move.hover(pin.key, event.clientY > rect.top + rect.height / 2);
+          return;
+        }
         // Only a song Prismix itself is dragging, and only onto a playlist that can take it.
         if (!playlistId || !isPrismixTrackDrag(event)) return;
         event.preventDefault();
@@ -134,10 +185,21 @@ function PlaylistRow({ pin, pinned, onNavigate }: { pin: PinData; pinned: boolea
         setOver(true);
       }}
       onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false);
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setOver(false);
+        if (usePlaylistDrag.getState().over?.key === pin.key) usePlaylistDrag.setState({ over: null });
       }}
       onDrop={(event) => {
         setOver(false);
+        const move = usePlaylistDrag.getState();
+        if (move.key !== null && event.dataTransfer.types.includes(PLAYLIST_MIME)) {
+          if (move.section !== section) return;
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          onReorder(move.key, pin.key, event.clientY > rect.top + rect.height / 2);
+          move.end();
+          return;
+        }
         const track = droppedTrack(event);
         if (!playlistId || !track) return;
         event.preventDefault();
@@ -148,14 +210,20 @@ function PlaylistRow({ pin, pinned, onNavigate }: { pin: PinData; pinned: boolea
         );
       }}
     >
+      {dropLine && (
+        <span
+          className={`pointer-events-none absolute inset-x-1 z-1 h-0.5 rounded-full bg-key ${dropLine === 'before' ? '-top-px' : '-bottom-px'}`}
+          aria-hidden="true"
+        />
+      )}
       <PrefetchNavLink
         to={pin.href}
         className={`${item} pr-8${over ? ' bg-quaternary shadow-[inset_0_0_0_1.5px_var(--keyColor)]' : ''}${
           dragging && playlistId !== null && !over ? ' bg-quinary' : ''
         }`}
         onClick={onNavigate}
-        // The row is a drop target, not something to drag along.
-        draggable={false}
+        // Drag a playlist up or down to change the order it is listed in.
+        draggable
       >
         <Cover src={pin.thumbnail} />
         <span className={navLabel}>{pin.title}</span>
@@ -184,16 +252,30 @@ function PlaylistRow({ pin, pinned, onNavigate }: { pin: PinData; pinned: boolea
   );
 }
 
+/** The handlers a section of playlist rows needs to change its order, for [keys] as listed now. */
+function reordering(keys: string[], move: (from: string, to: string, after: boolean) => void) {
+  return {
+    onReorder: move,
+    onNudge: (key: string, direction: -1 | 1) => {
+      const at = keys.indexOf(key);
+      const neighbour = keys[at + direction];
+      if (at >= 0 && neighbour !== undefined) move(key, neighbour, direction > 0);
+    },
+  };
+}
+
 /** Pinned playlists, above the rest, from either catalogue. */
 function PinnedNav({ onNavigate }: { onNavigate: () => void }) {
   const pins = usePins((s) => s.pins);
+  const move = usePins((s) => s.move);
   if (!pins.length) return null;
+  const order = reordering(pins.map((p) => p.key), move);
   return (
     <>
       <h2 className={sectionHeader}>Pinned</h2>
       <ul className={list}>
         {pins.map((pin) => (
-          <PlaylistRow key={pin.key} pin={pin} pinned onNavigate={onNavigate} />
+          <PlaylistRow key={pin.key} pin={pin} pinned section="pinned" {...order} onNavigate={onNavigate} />
         ))}
       </ul>
     </>
@@ -290,6 +372,7 @@ function LibraryNav({ onNavigate }: { onNavigate: () => void }) {
   const pins = usePins((s) => s.pins);
   const refresh = usePins((s) => s.refresh);
   const pinned = new Set(pins.map((p) => p.key));
+  const saved = usePlaylistOrder((s) => s.order);
   const rows: PinData[] = (playlists.data ?? []).map((playlist) => ({
     key: ytmPinKey(playlist.id),
     title: playlist.title,
@@ -301,6 +384,20 @@ function LibraryNav({ onNavigate }: { onNavigate: () => void }) {
     for (const row of rows) if (usePins.getState().pins.some((p) => p.key === row.key)) refresh(row);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playlists.data]);
+  const listed = sortByOrder(
+    rows.filter((row) => !pinned.has(row.key)),
+    saved,
+  );
+  const order = reordering(
+    listed.map((row) => row.key),
+    (from, to, after) =>
+      usePlaylistOrder.getState().move(
+        listed.map((row) => row.key),
+        from,
+        to,
+        after,
+      ),
+  );
   return (
     <>
       <h2 className={sectionHeader}>Library</h2>
@@ -313,11 +410,9 @@ function LibraryNav({ onNavigate }: { onNavigate: () => void }) {
             <span className={navLabel}>{LIBRARY_SECTIONS.playlists.title}</span>
           </PrefetchNavLink>
         </li>
-        {rows
-          .filter((row) => !pinned.has(row.key))
-          .map((row) => (
-            <PlaylistRow key={row.key} pin={row} pinned={false} onNavigate={onNavigate} />
-          ))}
+        {listed.map((row) => (
+          <PlaylistRow key={row.key} pin={row} pinned={false} section="ytm" {...order} onNavigate={onNavigate} />
+        ))}
       </ul>
     </>
   );
@@ -329,6 +424,7 @@ function SpotifyNav({ onNavigate }: { onNavigate: () => void }) {
   const pins = usePins((s) => s.pins);
   const refresh = usePins((s) => s.refresh);
   const pinned = new Set(pins.map((p) => p.key));
+  const saved = usePlaylistOrder((s) => s.order);
   const rows: PinData[] = (playlists.data ?? []).map((playlist) => ({
     key: spotifyPinKey(playlist.id),
     title: playlist.name,
@@ -339,6 +435,20 @@ function SpotifyNav({ onNavigate }: { onNavigate: () => void }) {
     for (const row of rows) if (usePins.getState().pins.some((p) => p.key === row.key)) refresh(row);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playlists.data]);
+  const listed = sortByOrder(
+    rows.filter((row) => !pinned.has(row.key)),
+    saved,
+  );
+  const order = reordering(
+    listed.map((row) => row.key),
+    (from, to, after) =>
+      usePlaylistOrder.getState().move(
+        listed.map((row) => row.key),
+        from,
+        to,
+        after,
+      ),
+  );
   return (
     <>
       <h2 className={sectionHeader}>Spotify</h2>
@@ -349,11 +459,9 @@ function SpotifyNav({ onNavigate }: { onNavigate: () => void }) {
             <span className={navLabel}>All Spotify Playlists</span>
           </PrefetchNavLink>
         </li>
-        {rows
-          .filter((row) => !pinned.has(row.key))
-          .map((row) => (
-            <PlaylistRow key={row.key} pin={row} pinned={false} onNavigate={onNavigate} />
-          ))}
+        {listed.map((row) => (
+          <PlaylistRow key={row.key} pin={row} pinned={false} section="spotify" {...order} onNavigate={onNavigate} />
+        ))}
       </ul>
     </>
   );
