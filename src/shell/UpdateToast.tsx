@@ -16,7 +16,7 @@ export function UpdateToast() {
   const busy = status === 'downloading' || status === 'installing';
   if (!(status === 'available' && !dismissed) && !busy) return null;
   return (
-    <div className="pointer-events-none absolute right-4 bottom-[calc(var(--player-pill-height)+var(--player-bottom-offset)+16px)] z-[calc(var(--z-web-chrome)+2)]" aria-live="polite">
+    <div className="pointer-events-none absolute right-4 bottom-(--player-bottom-offset) z-[calc(var(--z-web-chrome)+2)]" aria-live="polite">
       <div className="pointer-events-auto flex w-[300px] items-center gap-2.5 rounded-[10px] bg-thin-material px-3 py-2.5 shadow-glass [backdrop-filter:saturate(180%)_blur(60px)]">
         <span className="grid size-6 flex-none place-items-center text-secondary">
           <Download size={16} />

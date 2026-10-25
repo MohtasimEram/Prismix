@@ -38,14 +38,20 @@ const HIDE_FOOTER = '.lyrics-footer { visibility: hidden !important; pointer-eve
 /**
  * am-lyrics paints each word with the highlight clipped to the word's own box (background-clip: text),
  * and a line's box is only as tall as its line-height. Hindi, Bangla and other Indic glyphs reach above
- * and below that box (headline bars, vowel signs), so their tops were cut off. Padding the word's box
- * out over them, and taking the same amount back in margin, leaves the layout as it was; the letter-by-letter
- * spans spread their highlight over the padded box too, so a sign above the letter lights with it.
- * The dots of an instrumental gap are left alone.
+ * and below that box (headline bars, vowel signs), so their tops were cut off. The box is made taller,
+ * and the same amount taken back in margin, so the layout stays as it was. Only in lyrics that contain such
+ * a script (the host's `data-tall`); the dots of an instrumental gap are left alone.
+ *
+ * A word is padded. The letter-by-letter spans a long word is cut into are made taller by their line height
+ * instead: padding them as well put a hazy white block behind long words, because their highlight is
+ * laid out against the box they have without padding. A taller line box leaves that box as it was.
  */
 const TALL_GLYPHS =
-  ' .lyrics-line:not(.lyrics-gap) .lyrics-syllable { padding-block: 0.32em; margin-block: -0.32em; }' +
-  ' .lyrics-line:not(.lyrics-gap) .lyrics-syllable span.char { padding-block: 0.32em; margin-block: -0.32em; background-origin: padding-box; }';
+  ' :host([data-tall]) .lyrics-line:not(.lyrics-gap) .lyrics-syllable { padding-block: 0.32em; margin-block: -0.32em; }' +
+  ' :host([data-tall]) .lyrics-line:not(.lyrics-gap) .lyrics-syllable span.char { line-height: 1.75; margin-block: calc((var(--am-lyrics-line-height, 1.2) - 1.75) / 2 * 1em); }';
+
+/** Indic scripts (Devanagari to Sinhala), the ones whose letters reach out of the line box and need TALL_GLYPHS. */
+const INDIC = /[\u0900-\u0DFF]/;
 
 const LYRIC_FONT =
   "'Prismix SF Pro Display', 'DM Sans', 'Noto Sans Bengali', 'Nirmala UI', 'Vrinda', 'Kohinoor Bangla', 'Bangla Sangam MN', 'Shonar Bangla', system-ui, sans-serif";
@@ -127,11 +133,42 @@ function LyricsView({ ttml, full }: { ttml: string; full: boolean }) {
     el.fontFamily = LYRIC_FONT;
     el.className = 'block min-h-0 flex-1 overflow-hidden [--am-lyrics-highlight-color:#fff]';
     el.toggleAttribute('data-full', full);
+    el.toggleAttribute('data-tall', INDIC.test(ttml));
     const onLineClick = (event: Event) => {
       const timestamp = (event as CustomEvent<{ timestamp: number }>).detail?.timestamp;
       if (typeof timestamp === 'number') usePlayer.getState().seek(timestamp / 1000);
     };
     el.addEventListener('line-click', onLineClick);
+    // A line is only for clicking to seek. A mouse press must not leave focus on it: the line would then answer
+    // Space itself (outlined, nothing paused) when Space belongs to the player. Presses on the toolbar
+    // (its dropdown and buttons) are left alone.
+    const inLine = (event: Event) => event.composedPath().some((node) => node instanceof HTMLElement && node.classList.contains('lyrics-line'));
+    // On mousedown, not pointerdown: cancelling that one would swallow the mousedown, and it is mousedown that focuses.
+    const onMouseDown = (event: MouseEvent) => {
+      if (event.button !== 0 || !inLine(event)) return;
+      event.preventDefault();
+      // Cancelling the press leaves focus where it was, such as the Lyrics button that opened this panel,
+      // and Space would then press that button (closing the panel). Focus is let go instead, so Space plays and pauses.
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused !== document.body) focused.blur();
+    };
+    const dropLineFocus = () => {
+      const active = el.shadowRoot?.activeElement;
+      if (active instanceof HTMLElement && active.closest('.lyrics-line')) active.blur();
+    };
+    // Should a line hold focus all the same (Tab, or a click that took it), Space still plays and pauses.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== ' ' || event.ctrlKey || event.metaKey || event.altKey) return;
+      const active = el.shadowRoot?.activeElement;
+      if (!(active instanceof HTMLElement) || !active.closest('.lyrics-line')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      active.blur();
+      if (!event.repeat) usePlayer.getState().togglePlay();
+    };
+    el.addEventListener('mousedown', onMouseDown, true);
+    el.addEventListener('click', dropLineFocus);
+    el.addEventListener('keydown', onKeyDown, true);
     host.current?.append(el);
     element.current = el;
     const unmounted = new AbortController();
@@ -159,6 +196,9 @@ function LyricsView({ ttml, full }: { ttml: string; full: boolean }) {
       unmounted.abort();
       stopRepair?.();
       el.removeEventListener('line-click', onLineClick);
+      el.removeEventListener('mousedown', onMouseDown, true);
+      el.removeEventListener('click', dropLineFocus);
+      el.removeEventListener('keydown', onKeyDown, true);
       el.remove();
       element.current = null;
     };
@@ -168,6 +208,7 @@ function LyricsView({ ttml, full }: { ttml: string; full: boolean }) {
 
   useEffect(() => {
     if (element.current && element.current.ttml !== ttml) element.current.ttml = ttml;
+    element.current?.toggleAttribute('data-tall', INDIC.test(ttml));
   }, [ttml]);
 
   useEffect(() => {
