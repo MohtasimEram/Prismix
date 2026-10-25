@@ -95,8 +95,10 @@ export default function HomePage() {
   const shelves = home.data.pages
     .flatMap((page) => page.data)
     .filter((shelf) => !(recent.length > 0 && shelf.title.trim().toLowerCase() === RECENT_TITLE.toLowerCase()));
-  // "New from Artists You Follow" sits right under "Trending songs for you"; without that shelf it stays on top.
-  const trendingAt = shelves.findIndex((shelf) => /trending songs/i.test(shelf.title));
+  // "New from Artists You Follow" sits right under "New releases". Until that shelf has loaded (or if the feed has
+  // none) it goes under "Trending songs for you" instead, and without either it stays on top.
+  const releasesAt = shelves.findIndex((shelf) => /new releases|new albums/i.test(shelf.title));
+  const trendingAt = releasesAt >= 0 ? releasesAt : shelves.findIndex((shelf) => /trending songs/i.test(shelf.title));
   return (
     <>
       <PageHeader title="Home" />
