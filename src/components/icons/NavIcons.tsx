@@ -38,6 +38,13 @@ export const DiscoverIcon = make([
   },
 ]);
 
+export const DownloadsIcon = make([
+  {
+    fillOpacity: 0.95,
+    d: 'M11 3.5h2v8.1l2.7-2.7 1.4 1.4-5.1 5.1-5.1-5.1 1.4-1.4 2.7 2.7zM5 17h2v2h10v-2h2v4H5z',
+  },
+]);
+
 export const NewIcon = make([
   {
     fillOpacity: 0.95,

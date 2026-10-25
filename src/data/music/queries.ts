@@ -31,6 +31,7 @@ import {
   playlistHasTrack,
   fetchSearch,
   fetchSuggestions,
+  moveInPlaylist,
   setArtistFollowed,
   setListSaved,
   setTrackLiked,
@@ -38,6 +39,7 @@ import {
   type Paged,
   type PlaylistOption,
 } from './api';
+import { moveBefore } from '@/lib/moveItem';
 import { isLibrarySection, LIKED_MUSIC_PLAYLIST, type LibrarySection } from './library';
 import type { AlbumPage, ArtistPage, BrowseLink, BrowsePage, HeaderInfo, PlaylistPage, Shelf, Track } from './types';
 
@@ -363,6 +365,36 @@ export function useAddToPlaylist() {
 }
 
 /** Removes a song from one of the account's playlists; the page drops it at once and puts it back if that fails. */
+/**
+ * Reorders a song within a playlist: the list is rearranged on screen at once, and put back if
+ * YouTube refuses. [tracks] is the list as shown; [from] and [before] index into it.
+ */
+export function useReorderPlaylist() {
+  return useMutation({
+    mutationFn: ({ playlistId, tracks, from, before }: { playlistId: string; tracks: Track[]; from: number; before: number }) => {
+      const moving = tracks[from]?.setVideoId;
+      if (!moving) throw new Error('This song can’t be moved');
+      return moveInPlaylist(playlistId, moving, tracks[before]?.setVideoId ?? null);
+    },
+    onMutate: ({ playlistId, tracks, from, before }) => {
+      const same = (key: readonly unknown[]) => typeof key[2] === 'string' && key[2].replace(/^VL/, '') === playlistId.replace(/^VL/, '');
+      const filter = { queryKey: ['music', 'playlist'], predicate: (query: { queryKey: readonly unknown[] }) => same(query.queryKey) };
+      const previous = queryClient.getQueriesData<InfiniteData<PlaylistChunk>>(filter);
+      const reordered = moveBefore(tracks, from, before);
+      queryClient.setQueriesData<InfiniteData<PlaylistChunk>>(filter, (data) => {
+        if (!data) return data;
+        // The same pages, refilled in the new order: each keeps the number of songs it had.
+        let at = 0;
+        return { ...data, pages: data.pages.map((page) => ({ ...page, tracks: reordered.slice(at, (at += page.tracks.length)) })) };
+      });
+      return { previous };
+    },
+    onError: (_error, _vars, context) => {
+      for (const [key, data] of context?.previous ?? []) queryClient.setQueryData(key, data);
+    },
+  });
+}
+
 export function useRemoveFromPlaylist() {
   return useMutation({
     mutationFn: ({ playlistId, videoId }: { playlistId: string; videoId: string }) => removeFromPlaylist(playlistId, videoId),

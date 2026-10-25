@@ -1,6 +1,7 @@
 import { line, lineAlignments, withInstrumentalGaps, wordsFromRuns, type LyricLine, type TimedRun } from './model';
 import { decodeEntities, parseEnhancedLrc, parseLrc, parseProvider, parseTtml, plainLines, type Parsed } from './parse';
 import { lyricsGet, urlWith } from './http';
+import { artistsAgree, namesAgree } from './plausible';
 import { appleWebToken } from '@/data/apple/webToken';
 
 /**
@@ -210,12 +211,14 @@ function textScore(candidate: string, wanted: string, exact: number, partial: nu
   const w = wanted.toLowerCase();
   if (!c.trim() || !w.trim()) return 0;
   if (c === w) return exact;
-  return c.includes(w) || w.includes(c) ? partial : 0;
+  return namesAgree(c, w) ? partial : 0;
 }
 
 function bestCandidate(root: unknown, q: LyricsQuery): Candidate | null {
   let best: { c: Candidate; score: number } | null = null;
   for (const c of collectCandidates(root)) {
+    // A candidate that isn't this song, or isn't by these artists, is never taken, however close its length.
+    if (!namesAgree(c.title, q.title) || !artistsAgree(c.artist, q.artist)) continue;
     let score = textScore(c.title, q.title, 20, 10) + textScore(c.artist, q.artist, 15, 5);
     if (q.durationMs > 0 && c.durationMs > 0) {
       const diff = Math.abs(c.durationMs - q.durationMs);
@@ -311,6 +314,7 @@ async function paxGeneric(q: LyricsQuery, key: string): Promise<Parsed | null> {
       const parsed = paxResponse(JSON.stringify(document));
       if (!parsed) return null;
       const c = collectCandidates([document])[0];
+      if (c && (!namesAgree(c.title, q.title) || !artistsAgree(c.artist, q.artist))) return null;
       const score = c ? textScore(c.title, q.title, 20, 10) + textScore(c.artist, q.artist, 15, 5) : 0;
       const last = Math.max(0, ...parsed.lines.map((l) => Math.max(l.timeMs, l.sungUntilMs ?? 0, l.words.at(-1)?.endMs ?? 0)));
       return { parsed, score, distance: q.durationMs > 0 ? Math.abs(last - q.durationMs) : 0 };
@@ -490,22 +494,26 @@ export async function kugou(q: LyricsQuery): Promise<Parsed | null> {
   const keyword = `${stripParenthetical(q.title)} - ${stripParenthetical(q.artist)}${q.album ? ` ${q.album}` : ''}`;
   const secs = Math.floor(q.durationMs / 1000);
   const ext = { route: 'extension' as const };
-  const songs = json<{ data?: { info?: { hash: string; duration?: number }[] } }>(
+  const songs = json<{ data?: { info?: { hash: string; duration?: number; songname?: string; singername?: string }[] } }>(
     await lyricsGet(urlWith('https://mobileservice.kugou.com/api/v3/search/song', { version: 9108, plat: 0, pagesize: 8, showtype: 0, keyword }), ext),
   );
   const hashes = (songs?.data?.info ?? [])
     .filter((s) => secs <= 0 || Math.abs((s.duration ?? -1) - secs) <= 8)
+    // The result has to be this song by one of these artists, where KuGou says who it is.
+    .filter((s) => (!s.songname || namesAgree(s.songname, q.title)) && (!s.singername || artistsAgree(s.singername, q.artist)))
     .sort((a, b) => Math.abs((a.duration ?? 0) - secs) - Math.abs((b.duration ?? 0) - secs))
     .map((s) => s.hash);
-  type Candidates = { candidates?: { id: string; accesskey: string }[] };
-  let candidate: { id: string; accesskey: string } | undefined;
+  type Candidate = { id: string; accesskey: string; song?: string; singer?: string };
+  type Candidates = { candidates?: Candidate[] };
+  const isThisSong = (c: Candidate) => (!c.song || namesAgree(c.song, q.title)) && (!c.singer || artistsAgree(c.singer, q.artist));
+  let candidate: Candidate | undefined;
   for (const hash of hashes) {
     candidate = json<Candidates>(await lyricsGet(urlWith('https://lyrics.kugou.com/search', { ver: 1, man: 'yes', client: 'pc', hash }), ext))?.candidates?.[0];
     if (candidate) break;
   }
   candidate ??= json<Candidates>(
     await lyricsGet(urlWith('https://lyrics.kugou.com/search', { ver: 1, man: 'yes', client: 'pc', keyword, duration: secs > 0 ? secs * 1000 : null }), ext),
-  )?.candidates?.[0];
+  )?.candidates?.find(isThisSong);
   if (!candidate) return null;
   const download = json<{ content?: string }>(
     await lyricsGet(urlWith('https://lyrics.kugou.com/download', { fmt: 'lrc', charset: 'utf8', client: 'pc', ver: 1, id: candidate.id, accesskey: candidate.accesskey }), ext),
@@ -533,9 +541,16 @@ export async function lrclib(q: LyricsQuery): Promise<Parsed | null> {
   )?.syncedLyrics;
   let synced = exact;
   if (!synced) {
-    const hits = json<{ syncedLyrics?: string; duration?: number }[]>(await lyricsGet(urlWith('https://lrclib.net/api/search', { track_name: title, artist_name: artist })));
+    // The search is loose and returns whatever resembles the words, so each hit has to be the song
+    // asked for (its name and, where known, its length) before its lyrics are taken.
+    const hits = json<{ syncedLyrics?: string; duration?: number; trackName?: string; artistName?: string }[]>(
+      await lyricsGet(urlWith('https://lrclib.net/api/search', { track_name: title, artist_name: artist })),
+    );
     synced = (hits ?? [])
       .filter((h) => h.syncedLyrics?.trim())
+      .filter((h) => !h.trackName || namesAgree(h.trackName, title))
+      .filter((h) => !h.artistName || !artist || namesAgree(h.artistName, artist) || (h.artistName ?? '').toLowerCase().includes(artist.toLowerCase().split(/[,&]/)[0]!.trim()))
+      .filter((h) => secs <= 0 || h.duration == null || Math.abs(h.duration - secs) <= 10)
       .sort((a, b) => Math.abs((a.duration ?? 0) - secs) - Math.abs((b.duration ?? 0) - secs))[0]?.syncedLyrics;
   }
   return synced ? fromLines(parseLrc(synced)) : null;
@@ -635,7 +650,9 @@ export async function musixmatch(q: LyricsQuery): Promise<Parsed | null> {
     }),
   );
   type Track = { track_id: number; track_name: string; artist_name?: string; track_length?: number; has_subtitles?: number; has_richsync?: number };
-  const tracks = ((search?.track_list as { track: Track }[] | undefined) ?? []).map((t) => t.track);
+  const tracks = ((search?.track_list as { track: Track }[] | undefined) ?? [])
+    .map((t) => t.track)
+    .filter((t) => namesAgree(t.track_name, q.title) && artistsAgree(t.artist_name ?? '', q.artist));
   const score = (t: Track) => {
     const name = t.track_name.trim().toLowerCase();
     const want = q.title.trim().toLowerCase();
@@ -668,14 +685,37 @@ export async function musixmatch(q: LyricsQuery): Promise<Parsed | null> {
 
 const GENIUS_NOISE =
   /\s*[([]\s*(?:from|feat\.?|ft\.?|featuring|with|prod\.?|produced by|official|lyrical|video|audio|remix|music video|visualizer|mv|hd|4k|hq|full song)[^)\]]*[)\]]|\s*\b(?:official\s+(?:music\s+)?(?:video|audio)|lyrical(?:\s+video)?|full\s+song|4k\s+video|hd\s+video|music\s+video)\b/gi;
-const geniusClean = (s: string) =>
-  s
+/** Cleans a title or artist for Genius; [keepSuffix] keeps what follows " | " ("Dil | Coke Studio Nu.WAV"). */
+const geniusClean = (s: string, keepSuffix = false) => {
+  const cleaned = s
     .replace(/[♪♫★☆【】《》「」~_]/g, ' ')
     .replace(GENIUS_NOISE, ' ')
-    .replace(/\b(?:prod(?:uced)?\.?(?:\s+by)?)\s+.*$/i, ' ')
-    .split(' | ')[0]!
-    .replace(/\s+/g, ' ')
-    .trim() || s.trim();
+    .replace(/\b(?:prod(?:uced)?\.?(?:\s+by)?)\s+.*$/i, ' ');
+  return (keepSuffix ? cleaned : cleaned.split(' | ')[0]!).replace(/\s+/g, ' ').trim() || s.trim();
+};
+
+/**
+ * The searches to try, best first. Genius files a song under one or two artists and the
+ * full title, so a long credit ("A, B, ProducerMusic") or a title cut at " | " can miss it:
+ * the first artist alone, and the title with its suffix, are tried too.
+ */
+export function geniusSearches(rawTitle: string, rawArtist: string): string[] {
+  const title = geniusClean(rawTitle);
+  const fullTitle = geniusClean(rawTitle, true);
+  const artist = geniusClean(rawArtist);
+  const artists = artist.split(ARTIST_SEPARATORS).map((a) => a.trim()).filter(Boolean);
+  const primary = artists[0] ?? artist;
+  const bare = title.replace(/\s*[([].*?[)\]]/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  const searches = [
+    `${primary} ${title}`,
+    `${primary} ${fullTitle}`,
+    `${artist} ${title}`,
+    `${artist} ${bare}`,
+    ...artists.slice(1, 3).map((a) => `${a} ${title}`),
+    bare || title,
+  ].map((q) => q.trim());
+  return [...new Set(searches.filter(Boolean))];
+}
 
 /** Genius's page HTML to lines, keeping "[Chorus]" headers and stanza breaks. */
 export function parseGeniusHtml(html: string): LyricLine[] {
@@ -712,7 +752,7 @@ export async function genius(q: LyricsQuery): Promise<Parsed | null> {
   const title = geniusClean(q.title);
   const artist = geniusClean(q.artist);
   const bare = title.replace(/\s*[([].*?[)\]]/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
-  const attempts = [...new Set([`${artist} ${title}`.trim(), `${artist} ${bare}`.trim(), bare || title])];
+  const attempts = geniusSearches(q.title, q.artist);
   for (const query of attempts) {
     const body = json<{ response?: { sections?: { type?: string; hits?: { result?: Obj }[] }[] } }>(
       await lyricsGet(urlWith('https://genius.com/api/search/multi', { q: query }), { route: 'extension' }),
@@ -724,9 +764,14 @@ export async function genius(q: LyricsQuery): Promise<Parsed | null> {
       .map((hit) => {
         const ht = String(hit.title ?? '').toLowerCase();
         const ha = String(hit.artist_names ?? '').toLowerCase();
-        const titleMatch = !!t && (ht === t || ht.includes(t) || t.includes(ht));
-        const artistMatch = !!a && (ha === a || ha.includes(a) || a.includes(ha));
-        if (!titleMatch && !artistMatch) return null;
+        const titleMatch = !!t && namesAgree(ht, t);
+        // Genius credits a song to its primary artist and lists the rest as features, so the whole
+        // credit line is read ("Dil by Coke Studio & Afusic (Ft. Zoha Waseem)"), not just the first names.
+        const credit = `${ha} ${String(hit.full_title ?? '')} ${String((hit.primary_artist as Obj | undefined)?.name ?? '')}`.toLowerCase();
+        const artistMatch = !!a && artistsAgree(credit, a);
+        // Both must fit: the same words in the title, and a shared artist. (A title match alone took
+        // another artist's "Alfa" for "Alfaaz", and Genius' translation pages are credited to no one in common.)
+        if (!titleMatch || !artistMatch) return null;
         let score = (ht === t ? 50 : titleMatch ? 25 : 0) + (artistMatch ? (ha === a ? 40 : 20) : 0);
         const path = String(hit.path ?? '');
         if (/translation/i.test(path) && !t.includes('translation')) score -= 30;

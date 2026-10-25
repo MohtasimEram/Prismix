@@ -43,6 +43,14 @@ export function DiscoverSkeleton() {
   );
 }
 
+export function DownloadsSkeleton() {
+  return (
+    <div aria-busy="true">
+      <PageHeader title="Downloads" />
+    </div>
+  );
+}
+
 export function SearchSkeleton() {
   return (
     <div aria-busy="true">

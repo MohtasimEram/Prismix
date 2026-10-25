@@ -16,6 +16,7 @@ commands.allow = [
   "discord_disconnect",
   "discord_set_activity",
   "save_download",
+  "delete_download",
   "prefs_get",
   "prefs_set",
   "tray_set_now_playing",

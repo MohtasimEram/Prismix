@@ -412,6 +412,25 @@ export async function removeFromPlaylist(playlistId: string, videoId: string): P
 }
 
 /**
+ * Moves a song within one of the account's playlists, to just before another song
+ * (or to the end when [beforeSetVideoId] is null). Both are the rows' own playlist ids
+ * (Track.setVideoId), since a song can be in a playlist twice.
+ */
+export async function moveInPlaylist(playlistId: string, setVideoId: string, beforeSetVideoId: string | null): Promise<void> {
+  const yt = await getSignedInnertube();
+  await yt.actions.execute('/browse/edit_playlist', {
+    playlistId: bareId(playlistId),
+    actions: [
+      beforeSetVideoId
+        ? { action: 'ACTION_MOVE_VIDEO_BEFORE', setVideoId, movedSetVideoIdSuccessor: beforeSetVideoId }
+        : { action: 'ACTION_MOVE_VIDEO_BEFORE', setVideoId },
+    ],
+    client: 'YTMUSIC',
+  });
+  forgetPlaylistContents(playlistId);
+}
+
+/**
  * A new private playlist holding [videoIds], as YtMusicRepository.createPlaylist
  * makes one (InnerTube `playlist/create`). Returns its id, without the VL.
  */

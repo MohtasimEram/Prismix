@@ -4,6 +4,7 @@ import type { Parsed } from './parse';
 import * as providers from './providers';
 import { enabledSources, useLyricsSettings } from './settings';
 import { artistForLyricsSearch, forLyricsSearch, sourceById, type LyricsSourceId } from './sources';
+import { lyricsFitDuration } from './plausible';
 import { sanitizeLyricDocument, sanitizeLyricText } from './sanitize';
 import { writeTtml } from './ttml';
 
@@ -167,7 +168,9 @@ export async function lookupLyrics(track: LyricsTrack, { only, onSource }: Looku
     return fetchFrom(source)
       .catch(() => null)
       .then((parsed) => {
-        const result = parsed?.lines.some((l) => l.text.trim()) ? toResult(source, parsed) : null;
+        let result = parsed?.lines.some((l) => l.text.trim()) ? toResult(source, parsed) : null;
+        // Timed lyrics that can't fit this song's length are another song's. Picking a provider by hand skips the check.
+        if (result && !only && !lyricsFitDuration(result.lines, track.durationMs)) result = null;
         onSource?.(source, result ? 'found' : 'missing');
         return result;
       });

@@ -101,6 +101,29 @@ pub async fn save_download(app: AppHandle, request: Request<'_>) -> AppResult<St
     Ok(path.display().to_string())
 }
 
+/// Deletes a file Prismix saved: only inside `<Downloads>/Prismix/`, so this can never remove anything else.
+/// A file that is already gone counts as deleted.
+#[tauri::command]
+pub async fn delete_download(app: AppHandle, path: String) -> AppResult<()> {
+    let base = app
+        .path()
+        .download_dir()
+        .or_else(|_| app.path().document_dir())
+        .map_err(|e| AppError::internal(e.to_string()))?;
+    let dir = base.join("Prismix");
+    let target = PathBuf::from(&path);
+    if !target.exists() {
+        return Ok(());
+    }
+    let dir = dir.canonicalize()?;
+    let target = target.canonicalize()?;
+    if !target.is_file() || target.parent() != Some(dir.as_path()) {
+        return Err(AppError::invalid("that file is not one Prismix saved"));
+    }
+    fs::remove_file(&target)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

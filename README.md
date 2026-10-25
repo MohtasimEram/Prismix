@@ -61,7 +61,7 @@ app (Tauri + Rust), not a browser tab, so it has a tray icon, media keys, native
 - **Tempo & pitch** control: change speed without changing the key, or the key without changing the speed
 - **10-band equalizer** with presets and a preamp
 - **Streaming and download quality** settings
-- **Save songs** to your computer straight from the track menu
+- **Downloads**: save songs from the track menu, the player bar, or *Download all* on any album or playlist; a Downloads page keeps the list
 - Optional **music-video playback**: videos play as audio by default, and one button switches to watching
 
 **Library & search**

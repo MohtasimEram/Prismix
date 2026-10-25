@@ -35,6 +35,18 @@ const HIDE_FOOTER = '.lyrics-footer { visibility: hidden !important; pointer-eve
 
 /** The phone's lyric typeface (@font-face in styles/global.css), then the app's. */
 // Bengali and other Indic faces follow, so a Bangla line is shaped by a font made for it.
+/**
+ * am-lyrics paints each word with the highlight clipped to the word's own box (background-clip: text),
+ * and a line's box is only as tall as its line-height. Hindi, Bangla and other Indic glyphs reach above
+ * and below that box (headline bars, vowel signs), so their tops were cut off. Padding the word's box
+ * out over them, and taking the same amount back in margin, leaves the layout as it was; the letter-by-letter
+ * spans spread their highlight over the padded box too, so a sign above the letter lights with it.
+ * The dots of an instrumental gap are left alone.
+ */
+const TALL_GLYPHS =
+  ' .lyrics-line:not(.lyrics-gap) .lyrics-syllable { padding-block: 0.32em; margin-block: -0.32em; }' +
+  ' .lyrics-line:not(.lyrics-gap) .lyrics-syllable span.char { padding-block: 0.32em; margin-block: -0.32em; background-origin: padding-box; }';
+
 const LYRIC_FONT =
   "'Prismix SF Pro Display', 'DM Sans', 'Noto Sans Bengali', 'Nirmala UI', 'Vrinda', 'Kohinoor Bangla', 'Bangla Sangam MN', 'Shonar Bangla', system-ui, sans-serif";
 
@@ -128,7 +140,7 @@ function LyricsView({ ttml, full }: { ttml: string; full: boolean }) {
       const root = el.shadowRoot;
       if (!root) return;
       const sheet = new CSSStyleSheet();
-      sheet.replaceSync(HIDE_FOOTER + FAR_LINES + FULL_SIZE);
+      sheet.replaceSync(HIDE_FOOTER + FAR_LINES + FULL_SIZE + TALL_GLYPHS);
       root.adoptedStyleSheets = [...root.adoptedStyleSheets, sheet];
       // am-lyrics animates letter by letter and cuts Bangla clusters apart (vowel signs on dotted circles).
       stopRepair = keepRenderedClustersWhole(root);

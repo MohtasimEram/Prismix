@@ -164,7 +164,32 @@ export function mapTrack(node: unknown): Track | null {
     thumbnail: thumbnailOf(n),
     index: Number.isFinite(index) ? index : null,
     plays: plays ?? n.views ?? null,
+    setVideoId: setVideoIdOf(n),
   };
+}
+
+/**
+ * The row's own id within its playlist (playlistSetVideoId), which moving it needs. YouTube.js
+ * doesn't keep it as a field, but it sits in the row's play button and in its "Remove from playlist"
+ * menu action, so those are searched (a bounded walk; both are small).
+ */
+function setVideoIdOf(node: YTNodes.MusicResponsiveListItem): string | null {
+  const seen = new WeakSet<object>();
+  const find = (value: unknown, depth: number): string | null => {
+    if (!value || typeof value !== 'object' || depth > 9 || seen.has(value)) return null;
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    for (const key of ['playlistSetVideoId', 'setVideoId', 'playlist_set_video_id']) {
+      const v = record[key];
+      if (typeof v === 'string' && v) return v;
+    }
+    for (const child of Object.values(record)) {
+      const hit = find(child, depth + 1);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return find(node.overlay, 0) ?? find(node.menu, 0);
 }
 
 /** Which layout a shelf of these items gets (report §2). */

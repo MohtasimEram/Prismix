@@ -1,9 +1,12 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { ArrowDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
 import type { ArtistRef, Track } from '@/data/music/types';
 import { beginTrackDrag, useDragTrack } from '@/state/dragTrack';
+import { useDownloadsLibrary } from '@/state/downloadsLibrary';
+import { removeDownload } from '@/playback/download';
 import { usePlayer } from '@/state/player';
 import { Artwork } from './Artwork';
 import { ExplicitBadge } from './ExplicitBadge';
@@ -30,6 +33,20 @@ interface TrackListProps {
   source?: ListContext['source'];
   /** On the account's own playlist: takes a song out of it (a Remove from Playlist item in each ⋯ menu). */
   onRemove?: ((track: Track) => void) | undefined;
+  /** On the account's own playlist: rows can be dragged to a new place. [before] is the row to land above (`tracks.length` = the end). */
+  onReorder?: ((from: number, before: number) => void) | undefined;
+}
+
+/** What a row needs to take part in dragging songs into a new order (see TrackList). */
+interface Reorder {
+  /** The row being dragged, and where it would land, as indices into the list. */
+  from: number | null;
+  before: number | null;
+  last: number;
+  start: (index: number) => void;
+  over: (before: number) => void;
+  drop: () => void;
+  end: () => void;
 }
 
 /* Track lists (report §3 album rows, §14 playlist rows). */
@@ -53,12 +70,41 @@ const row = [
   'data-current:bg-[color-mix(in_srgb,var(--systemPrimary)_12%,transparent)]',
   'before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:border-t-[0.5px] before:border-t-divider',
   'hover:before:border-t-transparent data-current:before:border-t-transparent [&:hover+&]:before:border-t-transparent [&[data-current]+&]:before:border-t-transparent',
+  // Reordering: the dragged row dims, and a key-colour line shows where it would land.
+  'data-dragging:opacity-40 after:pointer-events-none after:absolute after:inset-x-2 after:h-0.5 after:rounded-full after:bg-key',
+  'not-data-drop-above:not-data-drop-below:after:hidden data-drop-above:after:top-0 data-drop-below:after:bottom-0',
 ].join(' ');
 
 const rowVariant: Record<Variant, string> = {
   album: 'h-[46px] grid-cols-[minmax(0,1fr)_auto] rounded-row',
   playlist: `h-[54px] ${playlistColumns} rounded-[12px] max-md:grid-cols-[minmax(0,1fr)_auto]`,
 };
+
+/** A small green arrow beside a song that is saved on this computer, as Spotify marks its downloads; a click deletes the file. */
+function DownloadedBadge({ track, variant }: { track: Track; variant: Variant }) {
+  const saved = useDownloadsLibrary((s) => s.songs.some((x) => x.videoId === track.videoId));
+  const [busy, setBusy] = useState(false);
+  if (!saved) return null;
+  return (
+    <button
+      className={`absolute top-1/2 grid size-4 -translate-y-1/2 place-items-center rounded-full bg-green text-black transition-opacity hover:opacity-75 disabled:opacity-50 ${
+        // A fixed distance from the row's right edge, so every icon lines up whatever the time's width.
+        variant === 'playlist' ? 'end-[82px]' : 'end-[76px]'
+      }`}
+      title="Downloaded. Click to delete the file"
+      aria-label={`Delete the downloaded file of ${track.title}`}
+      disabled={busy}
+      onClick={(event) => {
+        event.stopPropagation();
+        setBusy(true);
+        void removeDownload(track).finally(() => setBusy(false));
+      }}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <ArrowDown size={11} strokeWidth={3.2} aria-hidden="true" />
+    </button>
+  );
+}
 
 function Artists({ artists }: { artists: ArtistRef[] }) {
   return (
@@ -94,9 +140,10 @@ interface RowProps {
   fallbackArtwork: string | null | undefined;
   onPlayRow: () => void;
   onRemove?: ((track: Track) => void) | undefined;
+  reorder?: Reorder | undefined;
 }
 
-function Row({ track, variant, position, fallbackArtwork, onPlayRow, onRemove }: RowProps) {
+function Row({ track, variant, position, fallbackArtwork, onPlayRow, onRemove, reorder }: RowProps) {
   const current = usePlayer((s) => s.nowPlaying?.videoId === track.videoId);
   const playing = usePlayer((s) => s.nowPlaying?.videoId === track.videoId && (s.status === 'playing' || s.status === 'buffering'));
   const togglePlay = usePlayer((s) => s.togglePlay);
@@ -109,15 +156,34 @@ function Row({ track, variant, position, fallbackArtwork, onPlayRow, onRemove }:
       data-variant={variant}
       data-current={current || undefined}
       data-unavailable={unavailable}
+      data-dragging={reorder?.from === position - 1 || undefined}
+      data-drop-above={(reorder?.from != null && reorder.before === position - 1) || undefined}
+      data-drop-below={(reorder?.from != null && reorder.before === position && position - 1 === reorder.last) || undefined}
       title={unavailable === 'matching' ? 'Looking for this on YouTube Music…' : unavailable === 'missing' ? 'Not found on YouTube Music' : undefined}
       onDoubleClick={onPlay}
       // Drag a song onto a playlist in the sidebar to add it.
       draggable={!unavailable}
       onDragStart={(event) => {
         // Dragging a link inside the row would carry its URL instead of the song.
-        if (!unavailable) beginTrackDrag(event, { videoId: track.videoId, title: track.title });
+        if (!unavailable && beginTrackDrag(event, { videoId: track.videoId, title: track.title })) reorder?.start(position - 1);
       }}
-      onDragEnd={() => useDragTrack.getState().end()}
+      onDragOver={(event) => {
+        if (!reorder || reorder.from === null) return;
+        // The row's upper half drops above it, the lower half below.
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        const box = event.currentTarget.getBoundingClientRect();
+        reorder.over(event.clientY < box.top + box.height / 2 ? position - 1 : position);
+      }}
+      onDrop={(event) => {
+        if (!reorder || reorder.from === null) return;
+        event.preventDefault();
+        reorder.drop();
+      }}
+      onDragEnd={() => {
+        useDragTrack.getState().end();
+        reorder?.end();
+      }}
     >
       <div className={`${cell} gap-3`}>
         <div className={`relative grid w-10 shrink-0 place-items-center${variant === 'playlist' ? ' ms-[7px]' : ''}`}>
@@ -193,6 +259,7 @@ function Row({ track, variant, position, fallbackArtwork, onPlayRow, onRemove }:
       )}
       <div className={`${cell} ${time[variant]} ${dimmed}`}>
         {/* The ⋯ button (TrackMenu) takes the time's place on hover, as Apple's rows do. */}
+        {!unavailable && <DownloadedBadge track={track} variant={variant} />}
         <span className={unavailable ? undefined : 'group-focus-within/row:invisible group-hover/row:invisible group-has-[[data-open]]/row:invisible'}>
           {unavailable === 'missing' ? 'Not found' : formatDuration(track.durationSec)}
         </span>
@@ -224,7 +291,28 @@ function Header() {
  * hover fill, the number (or artwork) turning into a play button. Long lists
  * are virtualized against the page's scroll container (prompt §3).
  */
-export function TrackList({ tracks, variant, fallbackArtwork, fallbackArtists, onNearEnd, source, onRemove }: TrackListProps) {
+export function TrackList({ tracks, variant, fallbackArtwork, fallbackArtists, onNearEnd, source, onRemove, onReorder }: TrackListProps) {
+  // Dragging rows into a new order: where the drag started and where it would land.
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dropBefore, setDropBefore] = useState<number | null>(null);
+  const reorder: Reorder | undefined = onReorder
+    ? {
+        from: dragFrom,
+        before: dropBefore,
+        last: tracks.length - 1,
+        start: setDragFrom,
+        over: setDropBefore,
+        end: () => {
+          setDragFrom(null);
+          setDropBefore(null);
+        },
+        drop: () => {
+          if (dragFrom !== null && dropBefore !== null) onReorder(dragFrom, dropBefore);
+          setDragFrom(null);
+          setDropBefore(null);
+        },
+      }
+    : undefined;
   const playRow = (i: number) => {
     // Rows from another catalogue that found no YouTube Music song stay out of the queue.
     if (source) {
@@ -278,6 +366,7 @@ export function TrackList({ tracks, variant, fallbackArtwork, fallbackArtists, o
                   fallbackArtwork={fallbackArtwork}
                   onPlayRow={() => playRow(item.index)}
                   onRemove={onRemove}
+                  reorder={reorder}
                 />
               </div>
             ))}
@@ -292,6 +381,7 @@ export function TrackList({ tracks, variant, fallbackArtwork, fallbackArtists, o
               fallbackArtwork={fallbackArtwork}
               onPlayRow={() => playRow(i)}
               onRemove={onRemove}
+              reorder={reorder}
             />
           ))
         )}

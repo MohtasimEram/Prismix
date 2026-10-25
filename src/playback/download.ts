@@ -1,15 +1,17 @@
 import { create } from 'zustand';
-import { invokeRaw, isDesktop } from '@/desktop/tauri';
+import { invoke, invokeRaw, isDesktop } from '@/desktop/tauri';
 import type { Track } from '@/data/music/types';
 import { botguard } from './youtube/botguard';
 import { getInnertube } from './youtube/innertube';
 import { resolvePlayer, usesWebPo, UnplayableError, type PlayerClientName } from './youtube/resolver';
-import { pickAudio, useQuality } from './quality';
+import { useDownloadsLibrary } from '@/state/downloadsLibrary';
+import { DOWNLOAD_FORMATS, pickAudio, useQuality } from './quality';
+import { defragment } from './remux';
 
 /**
  * Saves a song's audio to the computer, at the chosen download quality
  * (playback/quality.ts). The file is the stream YouTube Music serves,
- * untouched: Opus in a .webm, or AAC in an .m4a. It is fetched in ranged
+ * untouched: AAC in an .m4a by default, or Opus in a .webm (Settings › Download Format). It is fetched in ranged
  * pieces from the response's direct URLs (the clients that answer with
  * them, such as VISIONOS; SABR-only answers are skipped for the next client)
  * and handed to the browser's own save flow.
@@ -25,6 +27,8 @@ export interface DownloadEntry {
   progress: number;
   /** What was saved, e.g. "Opus · 139 kbps", or why it failed. */
   detail: string;
+  /** A finished entry that is a deletion, not a save (the toast words it differently). */
+  removed?: boolean | undefined;
 }
 
 interface DownloadsState {
@@ -124,17 +128,22 @@ export async function downloadTrack(track: Track): Promise<void> {
     const skip = new Set<PlayerClientName>();
     for (let attempt = 0; attempt < MAX_CLIENT_TRIES; attempt++) {
       const resolved = await resolvePlayer(yt, videoId, skip);
-      const formats = (resolved.info.streaming_data?.adaptive_formats ?? []).filter(
+      const playable = (resolved.info.streaming_data?.adaptive_formats ?? []).filter(
         (f) => f.has_audio && !f.has_video && (f.url || f.signature_cipher || f.cipher) && !/drc/i.test(String(f.audio_track?.id ?? '')),
       );
+      // The chosen file type first (M4A by default); if YouTube offers none of it for this song, whatever it does offer.
+      const { download, downloadFormat } = useQuality.getState();
+      const wanted = DOWNLOAD_FORMATS.find((f) => f.id === downloadFormat)!.codec;
+      const ofWanted = playable.filter((f) => (wanted === 'mp4a' ? codecOf(f.mime_type).startsWith('mp4a') : codecOf(f.mime_type).startsWith('opus')));
+      const formats = ofWanted.length ? ofWanted : playable;
       if (!formats.length) {
         skip.add(resolved.client);
         continue;
       }
       const index = pickAudio(
         formats.map((f) => ({ codec: codecOf(f.mime_type), kbps: Math.round((f.average_bitrate ?? f.bitrate) / 1000) })),
-        useQuality.getState().download,
-        ['opus', 'mp4a'],
+        download,
+        [wanted, wanted === 'mp4a' ? 'opus' : 'mp4a'],
       );
       const format = formats[index];
       if (!format) throw new Error('No audio stream to save');
@@ -151,10 +160,22 @@ export async function downloadTrack(track: Track): Promise<void> {
       const parts = await fetchChunks(url.toString(), total, (done) => report('working', done, 'Downloading…'));
       const mime = format.mime_type.split(';')[0] ?? 'audio/webm';
       const extension = mime.includes('webm') ? 'webm' : mime.includes('mp4') ? 'm4a' : 'audio';
-      const savedTo = await saveFile(parts, mime, fileNameFor(track, extension));
+      // YouTube's AAC comes as DASH fragments, which Windows Media Player and others can't open;
+      // rewritten as an ordinary .m4a (same audio). If that fails, the original bytes are saved.
+      const bytes = extension === 'm4a' ? defragment(concat(parts)) : null;
+      const savedTo = await saveFile(bytes ? [bytes] : parts, mime, fileNameFor(track, extension));
       const codec = codecOf(format.mime_type).split('.')[0] ?? '';
       const quality = `${codec} · ${Math.round((format.average_bitrate ?? format.bitrate) / 1000)} kbps`;
       report('done', 1, savedTo ? `${quality} · ${savedTo}` : quality);
+      useDownloadsLibrary.getState().add({
+        videoId,
+        title: track.title,
+        artist: track.artists.map((a) => a.name).join(', '),
+        thumbnail: track.thumbnail,
+        path: savedTo ?? '',
+        quality,
+        at: Date.now(),
+      });
       return;
     }
     throw new Error('YouTube only offers this song as a stream that can’t be saved yet');
@@ -162,4 +183,66 @@ export async function downloadTrack(track: Track): Promise<void> {
     const message = error instanceof UnplayableError ? error.message : error instanceof Error ? error.message : String(error);
     report('failed', 0, message);
   }
+}
+
+/**
+ * Takes a saved song back off the computer: the file in Downloads/Prismix is deleted and the
+ * song is forgotten, so its download button goes back to normal. If the file can't be
+ * deleted the song stays marked as saved and the toast says why.
+ */
+export async function removeDownload(track: Pick<Track, 'videoId' | 'title'>, { quiet = false }: { quiet?: boolean } = {}): Promise<boolean> {
+  const { videoId, title } = track;
+  const saved = useDownloadsLibrary.getState().songs.find((s) => s.videoId === videoId);
+  try {
+    if (saved?.path && isDesktop()) await invoke<void>('delete_download', { path: saved.path });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!quiet) useDownloads.getState().update({ videoId, title, state: 'failed', progress: 0, detail: `Couldn’t delete the file: ${message}`, removed: true });
+    return false;
+  }
+  useDownloadsLibrary.getState().remove(videoId);
+  if (!quiet) useDownloads.getState().update({ videoId, title, state: 'done', progress: 1, detail: 'Removed from your downloads', removed: true });
+  return true;
+}
+
+/**
+ * Deletes the saved files of every song in [tracks] that has one, and forgets them. One toast
+ * reports the whole batch. Returns how many were removed.
+ */
+export async function removeMany(tracks: readonly Track[], label: string): Promise<number> {
+  const saved = new Set(useDownloadsLibrary.getState().songs.map((s) => s.videoId));
+  const queue = tracks.filter((t) => saved.has(t.videoId));
+  let removed = 0;
+  for (const track of queue) if (await removeDownload(track, { quiet: true })) removed += 1;
+  const failed = queue.length - removed;
+  useDownloads.getState().update({
+    videoId: `remove:${label}`,
+    title: label,
+    state: failed ? 'failed' : 'done',
+    progress: 1,
+    detail: failed ? `Couldn’t delete ${failed} of ${queue.length} files` : `Removed ${removed} ${removed === 1 ? 'song' : 'songs'} from your downloads`,
+    removed: true,
+  });
+  return removed;
+}
+
+/** How many songs of a "download all" are fetched at once. */
+const PARALLEL = 2;
+
+/**
+ * Saves a list of songs, two at a time. Songs already saved, and rows that aren't on
+ * YouTube Music, are skipped. Returns how many were started.
+ */
+export async function downloadMany(tracks: readonly Track[]): Promise<number> {
+  const have = new Set(useDownloadsLibrary.getState().songs.map((s) => s.videoId));
+  const queue = tracks.filter((t) => !t.unavailable && !have.has(t.videoId));
+  let next = 0;
+  const worker = async () => {
+    while (next < queue.length) {
+      const track = queue[next++]!;
+      await downloadTrack(track);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL, queue.length) }, worker));
+  return queue.length;
 }

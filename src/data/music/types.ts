@@ -67,6 +67,8 @@ export interface Track {
   index: number | null;
   /** "19M plays", where YouTube shows it. */
   plays: string | null;
+  /** This row's own id within a playlist (YouTube's playlistSetVideoId), which moving it needs. Only playlist rows have one. */
+  setVideoId?: string | null;
   /**
    * A row from another catalogue (a Spotify playlist) that has no YouTube
    * Music version yet: still being looked for, or not found. Shown, never played.

@@ -1,9 +1,11 @@
 import { party, useParty } from '@/party/listenTogether';
-import { Infinity as InfinityIcon, MoreHorizontal, X } from 'lucide-react';
+import { Infinity as InfinityIcon, MoreHorizontal } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { Menu, MenuHeader, MenuItem, MenuSeparator } from '@/components/Menu';
+import { PrefetchLink } from '@/components/PrefetchLink';
+import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
 import { Artwork } from '@/components/music/Artwork';
-import { formatDuration } from '@/components/music/links';
+import { artistHref, formatDuration } from '@/components/music/links';
 import { autoplaySectionStart, upcomingUserQueueIndices, type QueueEntry } from '@/playback/queue/timeline';
 import { CROSSFADE_CHOICES, usePlayer } from '@/state/player';
 
@@ -18,14 +20,18 @@ function Row({
   onDragStart,
   onDropAt,
   dragging,
+  current = false,
 }: {
   entry: QueueEntry;
   at: number;
   onDragStart: (at: number) => void;
   onDropAt: (at: number) => void;
   dragging: boolean;
+  /** The song playing now: its cover pauses and resumes it, and it can't be dragged, removed or jumped to. */
+  current?: boolean;
 }) {
-  const { jumpTo, removeAt, playNext } = usePlayer.getState();
+  const { jumpTo, removeAt, playNext, togglePlay } = usePlayer.getState();
+  const playing = usePlayer((s) => s.status === 'playing' || s.status === 'buffering');
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [over, setOver] = useState(false);
   const close = useCallback(() => setAnchor(null), []);
@@ -36,51 +42,76 @@ function Row({
       className="group/row relative grid h-[55px] grid-cols-[40px_minmax(0,1fr)_40px] items-center gap-x-3 rounded-row px-2.5 hover:bg-quinary data-dragging:opacity-40 data-over:before:absolute data-over:before:inset-x-2.5 data-over:before:-top-px data-over:before:border-t-2 data-over:before:border-t-key"
       data-over={over || undefined}
       data-dragging={dragging || undefined}
-      draggable
+      draggable={!current}
       onDragStart={(e) => {
+        if (current) return;
         e.dataTransfer.effectAllowed = 'move';
         onDragStart(at);
       }}
       onDragOver={(e) => {
+        if (current) return;
         e.preventDefault();
         setOver(true);
       }}
       onDragLeave={() => setOver(false)}
       onDrop={(e) => {
+        if (current) return;
         e.preventDefault();
         setOver(false);
         onDropAt(at);
       }}
-      onDoubleClick={() => jumpTo(at)}
+      onDoubleClick={() => (current ? togglePlay() : jumpTo(at))}
     >
       <div className="relative size-10">
         <Artwork src={track.thumbnail} displayWidth={40} radius="var(--radius-artwork-small)" />
-        {/* The ✕ over the artwork's top-left, on hover. */}
+        {/* Play over the cover on hover; on the song playing now it's Pause (and Play when paused). */}
         <button
-          className="absolute -top-1.5 -left-1.5 hidden size-[22px] place-items-center rounded-full bg-thick-material text-primary shadow-[0_1px_3px_#0004] [backdrop-filter:blur(10px)] group-hover/row:grid"
-          aria-label={`Remove ${track.title}`}
-          onClick={() => removeAt(at)}
+          className="absolute inset-0 grid place-items-center rounded-(--radius-artwork-small) bg-black/45 text-white opacity-0 transition-opacity group-hover/row:opacity-100 focus-visible:opacity-100"
+          aria-label={current ? (playing ? `Pause ${track.title}` : `Play ${track.title}`) : `Play ${track.title}`}
+          title={current ? (playing ? 'Pause' : 'Play') : 'Play'}
+          onClick={() => (current ? togglePlay() : jumpTo(at))}
         >
-          <X size={12} strokeWidth={3} />
+          {current && playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
         </button>
       </div>
-      <button className="flex min-w-0 flex-col text-start" onClick={() => jumpTo(at)} aria-label={`Play ${track.title}`}>
-        <span className="truncate type-body text-primary">{track.title}</span>
-        <span className="truncate type-body text-secondary">{track.artists.map((a) => a.name).join(', ')}</span>
-      </button>
+      {/* The title plays the song; each artist's name is its own link to their page. */}
+      <div className="flex min-w-0 flex-col text-start">
+        <button className="truncate text-start type-body text-primary" onClick={() => (current ? togglePlay() : jumpTo(at))}>
+          {track.title}
+        </button>
+        <span className="truncate type-body text-secondary">
+          {track.artists.map((artist, i) => {
+            const href = artistHref(artist.id);
+            return (
+              <span key={`${artist.name}-${i}`}>
+                {i > 0 && ', '}
+                {href ? (
+                  <PrefetchLink to={href} className="hover:underline">
+                    {artist.name}
+                  </PrefetchLink>
+                ) : (
+                  artist.name
+                )}
+              </span>
+            );
+          })}
+        </span>
+      </div>
       <div className="relative grid items-center justify-items-end">
-        <span className="type-body tabular-nums text-secondary group-hover/row:invisible group-has-[[data-open]]/row:invisible">{formatDuration(track.durationSec)}</span>
-        <button
-          className="absolute inset-y-0 right-0 my-auto hidden size-7 place-items-center rounded-full text-key group-hover/row:grid data-open:grid"
-          aria-label={`More options for ${track.title}`}
-          aria-haspopup="menu"
-          data-open={anchor !== null || undefined}
-          onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
-        >
-          <MoreHorizontal size={16} />
-        </button>
+        <span className={`type-body tabular-nums text-secondary ${current ? '' : 'group-hover/row:invisible group-has-[[data-open]]/row:invisible'}`}>{formatDuration(track.durationSec)}</span>
+        {!current && (
+          <button
+            className="absolute inset-y-0 right-0 my-auto hidden size-7 place-items-center rounded-full text-key group-hover/row:grid data-open:grid"
+            aria-label={`More options for ${track.title}`}
+            aria-haspopup="menu"
+            data-open={anchor !== null || undefined}
+            onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
+          >
+            <MoreHorizontal size={16} />
+          </button>
+        )}
       </div>
-      {anchor && (
+      {anchor && !current && (
         <Menu anchor={anchor} onClose={close} label={track.title}>
           <MenuItem onSelect={() => (close(), jumpTo(at))}>Play Now</MenuItem>
           <MenuItem
@@ -125,6 +156,7 @@ export function UpNext() {
   const beforeAutoplay = upcoming.filter(({ at }) => at < autoplayAt);
   const afterAutoplay = upcoming.filter(({ at }) => at >= autoplayAt);
   const playingFrom = queue[index]?.source?.title;
+  const nowPlaying = index >= 0 ? queue[index] : undefined;
 
   const rows = (items: typeof upcoming) =>
     items.map(({ entry, at }) => (
@@ -174,6 +206,15 @@ export function UpNext() {
         )}
       </div>
       {playingFrom && <p className="truncate px-5 pb-2 type-callout text-secondary">Playing from {playingFrom}</p>}
+      {nowPlaying && (
+        <div className="px-2">
+          <h4 className="mx-2.5 mb-0.5 type-callout-emphasized">Now Playing</h4>
+          <ol className={list}>
+            <Row entry={nowPlaying} at={index} current dragging={false} onDragStart={setDragFrom} onDropAt={() => undefined} />
+          </ol>
+        </div>
+      )}
+      {nowPlaying && upcoming.length > 0 && <h4 className="mx-5 mt-3 mb-0.5 type-callout-emphasized">Up Next</h4>}
 
       {upcoming.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 pb-20 text-center type-callout text-secondary">

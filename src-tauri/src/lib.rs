@@ -127,6 +127,7 @@ pub fn run() {
             discord::discord_disconnect,
             discord::discord_set_activity,
             download::save_download,
+            download::delete_download,
             prefs::prefs_get,
             prefs::prefs_set,
             tray::tray_set_now_playing,

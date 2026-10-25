@@ -7,6 +7,7 @@ import {
   AllPlaylistsIcon,
   ArtistsIcon,
   DiscoverIcon,
+  DownloadsIcon,
   HomeIcon,
   MadeForYouIcon,
   NewIcon,
@@ -49,11 +50,12 @@ const LIBRARY_ICONS: Record<Exclude<LibrarySection, 'playlists'>, NavItem['Icon'
   'made-for-you': MadeForYouIcon,
 };
 
-const LIBRARY: NavItem[] = (Object.keys(LIBRARY_ICONS) as (keyof typeof LIBRARY_ICONS)[]).map((section) => ({
+const LIBRARY_PAGES: NavItem[] = (Object.keys(LIBRARY_ICONS) as (keyof typeof LIBRARY_ICONS)[]).map((section) => ({
   to: `/library/${section}`,
   label: LIBRARY_SECTIONS[section].title,
   Icon: LIBRARY_ICONS[section],
 }));
+const LIBRARY: NavItem[] = [...LIBRARY_PAGES, { to: '/downloads', label: 'Downloads', Icon: DownloadsIcon }];
 
 // A sidebar row; NavLink sets aria-current on the page's own row.
 const item =

@@ -13,6 +13,13 @@ import { create } from 'zustand';
 
 export type StreamQuality = 'auto' | 'low' | 'normal' | 'high' | 'max';
 export type DownloadQuality = 'standard' | 'high' | 'max';
+/** The file a download is saved as: AAC in an .m4a (plays almost anywhere) or Opus in a .webm. */
+export type DownloadFormat = 'm4a' | 'webm';
+
+export const DOWNLOAD_FORMATS: { id: DownloadFormat; label: string; detail: string; codec: 'mp4a' | 'opus' }[] = [
+  { id: 'm4a', label: 'M4A (AAC)', detail: 'Plays on almost every phone, car, player and app', codec: 'mp4a' },
+  { id: 'webm', label: 'WebM (Opus)', detail: 'Slightly more efficient, but many players can’t open it', codec: 'opus' },
+];
 
 export const STREAM_QUALITIES: { id: StreamQuality; label: string; detail: string; ceilingKbps: number }[] = [
   { id: 'auto', label: 'Automatic', detail: 'Best Opus stream (about 130–160 kbps)', ceilingKbps: Infinity },
@@ -80,34 +87,42 @@ const STORAGE_KEY = 'prismix:quality';
 interface Stored {
   stream: StreamQuality;
   download: DownloadQuality;
+  downloadFormat: DownloadFormat;
 }
 
 const isStream = (v: unknown): v is StreamQuality => STREAM_QUALITIES.some((q) => q.id === v);
 const isDownload = (v: unknown): v is DownloadQuality => DOWNLOAD_QUALITIES.some((q) => q.id === v);
+const isFormat = (v: unknown): v is DownloadFormat => DOWNLOAD_FORMATS.some((f) => f.id === v);
 
 function load(): Stored {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null') as Partial<Stored> | null;
-    return { stream: isStream(raw?.stream) ? raw.stream : 'auto', download: isDownload(raw?.download) ? raw.download : 'high' };
+    return {
+      stream: isStream(raw?.stream) ? raw.stream : 'auto',
+      download: isDownload(raw?.download) ? raw.download : 'high',
+      downloadFormat: isFormat(raw?.downloadFormat) ? raw.downloadFormat : 'm4a',
+    };
   } catch {
-    return { stream: 'auto', download: 'high' };
+    return { stream: 'auto', download: 'high', downloadFormat: 'm4a' };
   }
 }
 
 interface QualityState extends Stored {
   setStream: (quality: StreamQuality) => void;
   setDownload: (quality: DownloadQuality) => void;
+  setDownloadFormat: (format: DownloadFormat) => void;
 }
 
 export const useQuality = create<QualityState>()((set) => ({
   ...load(),
   setStream: (stream) => set({ stream }),
   setDownload: (download) => set({ download }),
+  setDownloadFormat: (downloadFormat) => set({ downloadFormat }),
 }));
 
-useQuality.subscribe(({ stream, download }) => {
+useQuality.subscribe(({ stream, download, downloadFormat }) => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ stream, download }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ stream, download, downloadFormat }));
   } catch {
     // Storage full or blocked: the choice lasts for this run.
   }

@@ -18,7 +18,7 @@ function Toast({ entry }: { entry: DownloadEntry }) {
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate type-callout-emphasized">{entry.title}</span>
         <span className={`truncate type-callout ${entry.state === 'failed' ? 'text-key' : 'text-secondary'}`}>
-          {entry.state === 'working' ? `${Math.round(entry.progress * 100)}% · ${entry.detail}` : entry.state === 'done' ? `Saved · ${entry.detail}` : `Couldn’t download · ${entry.detail}`}
+          {entry.state === 'working' ? `${Math.round(entry.progress * 100)}% · ${entry.detail}` : entry.state === 'done' ? (entry.removed ? entry.detail : `Saved · ${entry.detail}`) : entry.removed ? entry.detail : `Couldn’t download · ${entry.detail}`}
         </span>
         {entry.state === 'working' && (
           <span className="mt-0.5 h-0.5 overflow-hidden rounded-full bg-quaternary">
@@ -35,12 +35,12 @@ function Toast({ entry }: { entry: DownloadEntry }) {
   );
 }
 
-/** Downloads in progress, finished or failed, above the player pill's corner. */
+/** Downloads in progress, finished or failed, bottom right, level with the player pill. */
 export function DownloadToasts() {
   const entries = useDownloads((s) => s.entries);
   if (!entries.length) return null;
   return (
-    <ul className="pointer-events-none absolute right-4 bottom-[calc(var(--player-pill-height)+var(--player-bottom-offset)+16px)] z-[calc(var(--z-web-chrome)+1)] flex flex-col gap-2" aria-live="polite">
+    <ul className="pointer-events-none absolute right-4 bottom-(--player-bottom-offset) z-[calc(var(--z-web-chrome)+1)] flex flex-col gap-2" aria-live="polite">
       {entries.map((entry) => (
         <Toast key={entry.videoId} entry={entry} />
       ))}

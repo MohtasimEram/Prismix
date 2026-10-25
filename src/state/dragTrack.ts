@@ -42,7 +42,7 @@ export function beginTrackDrag(event: React.DragEvent, track: DraggedTrack): boo
     return false;
   }
   const title = track.title.slice(0, 200);
-  event.dataTransfer.effectAllowed = 'copy';
+  event.dataTransfer.effectAllowed = 'copyMove';
   event.dataTransfer.setData(TRACK_MIME, JSON.stringify({ videoId: track.videoId, title }));
   // Plain text too, so dropping on a text field gives the title rather than nothing.
   event.dataTransfer.setData('text/plain', title);

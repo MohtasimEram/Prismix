@@ -22,6 +22,7 @@ export function FavoriteButton({ videoId, className, size = 18 }: FavoriteButton
     <button
       className={className}
       aria-label={liked ? 'Unfavorite' : 'Favorite'}
+      title={liked ? 'Remove from Favorites' : 'Add to Favorites'}
       aria-pressed={liked}
       disabled={status.isPending}
       onClick={(event) => {

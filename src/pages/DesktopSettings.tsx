@@ -7,7 +7,7 @@ import { isDesktop } from '@/desktop/tauri';
 import { appVersion, useUpdater } from '@/desktop/updater';
 import { desktopPrefs, setDesktopPrefs, type DesktopPrefs } from '@/desktop/window';
 import { EQ_BANDS, EQ_PRESETS, PITCH_LIMITS, TEMPO_LIMITS, useAudioFx, useTempoPitch } from '@/playback/audioFx';
-import { DOWNLOAD_QUALITIES, STREAM_QUALITIES, useQuality } from '@/playback/quality';
+import { DOWNLOAD_FORMATS, DOWNLOAD_QUALITIES, STREAM_QUALITIES, useQuality } from '@/playback/quality';
 import { useScrobbling, validateToken } from '@/playback/scrobbling';
 import { useSleepTimer } from '@/playback/sleepTimer';
 import { Select } from '@/components/Select';
@@ -152,7 +152,7 @@ export function TempoPitchSettings() {
 
 /** Settings › Sound: streaming and download quality (playback/quality.ts). */
 export function QualitySettings() {
-  const { stream, download, setStream, setDownload } = useQuality();
+  const { stream, download, downloadFormat, setStream, setDownload, setDownloadFormat } = useQuality();
   const streamDetail = STREAM_QUALITIES.find((q) => q.id === stream)?.detail;
   const downloadDetail = DOWNLOAD_QUALITIES.find((q) => q.id === download)?.detail;
   return (
@@ -179,6 +179,18 @@ export function QualitySettings() {
           value={download}
           options={DOWNLOAD_QUALITIES.map((q) => ({ value: q.id, label: q.label }))}
           onChange={setDownload}
+        />
+      </label>
+      <label className={settingsUi.controlRow}>
+        <span className={settingsUi.rowText}>
+          <span>Download Format</span>
+          <span className={settingsUi.rowDetail}>{DOWNLOAD_FORMATS.find((f) => f.id === downloadFormat)?.detail}.</span>
+        </span>
+        <Select
+          label="Download Format"
+          value={downloadFormat}
+          options={DOWNLOAD_FORMATS.map((f) => ({ value: f.id, label: f.label }))}
+          onChange={setDownloadFormat}
         />
       </label>
     </>
