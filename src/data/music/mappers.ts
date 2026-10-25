@@ -283,11 +283,59 @@ export function mapAlbum(id: string, album: Pick<YTMusic.Album, 'header' | 'cont
   };
 }
 
+type Privacy = NonNullable<HeaderInfo['privacy']>;
+const PRIVACY_WORDS: Record<string, Privacy> = { private: 'private', public: 'public', unlisted: 'unlisted' };
+const SKIPPED_FOR_PRIVACY = new Set(['title', 'description', 'thumbnail', 'thumbnails', 'strapline_text_one']);
+
+/**
+ * Whether a playlist is private, public or unlisted, as its header says. YouTube
+ * states it as a `privacy` field of the owner's edit header, as a PRIVACY_* icon,
+ * or as a word in the subtitle; the header is searched for any of them (never in
+ * the title or description, where "Private" could just be the name).
+ */
+export function privacyOf(header: unknown): Privacy | null {
+  const seen = new WeakSet<object>();
+  const fromWord = (value: unknown): Privacy | null => (typeof value === 'string' ? (PRIVACY_WORDS[value.trim().toLowerCase()] ?? null) : null);
+  const visit = (node: unknown, depth: number): Privacy | null => {
+    if (!node || typeof node !== 'object' || depth > 8 || seen.has(node)) return null;
+    seen.add(node);
+    for (const [key, value] of Object.entries(node)) {
+      if (SKIPPED_FOR_PRIVACY.has(key)) continue;
+      if (typeof value === 'string') {
+        if (/privacy/i.test(key)) {
+          const word = fromWord(value.replace(/^PRIVACY_/i, ''));
+          if (word) return word;
+        }
+        const icon = /^PRIVACY_(PRIVATE|PUBLIC|UNLISTED)$/i.exec(value);
+        if (icon) return PRIVACY_WORDS[icon[1]!.toLowerCase()] ?? null;
+      } else {
+        const found = visit(value, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  const found = visit(header, 0);
+  if (found) return found;
+  // The subtitle's own words: "Playlist • Private • 2026".
+  const h = header as { subtitle?: TextLike; second_subtitle?: TextLike } | null | undefined;
+  for (const line of [h?.subtitle, h?.second_subtitle]) {
+    const parts = text(line).split(/\s*[•·]\s*/);
+    for (const part of parts) {
+      const word = fromWord(part);
+      if (word) return word;
+    }
+  }
+  return null;
+}
+
 export function mapPlaylist(id: string, playlist: { header?: unknown; items: readonly unknown[] }): PlaylistPage {
   const header = playlist.header as YTNodes.MusicResponsiveHeader | undefined;
+  const privacy = privacyOf(playlist.header);
   return {
     id,
     ...headerInfo(header?.type === 'MusicResponsiveHeader' ? header : undefined),
+    ...(privacy && { privacy }),
     tracks: playlist.items.map(mapTrack).filter((t): t is Track => !!t),
   };
 }

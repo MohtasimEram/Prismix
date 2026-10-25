@@ -11,9 +11,15 @@ import { useEffect, useState } from 'react';
 import type { DetectedExtension } from '@/bridge';
 import { extensionQueryKey, useExtension } from '@/extension/useExtension';
 import { useYtAuth, ytAuthSnapshot } from '@/extension/useYtAuth';
+import { forgetPrivatePlaylist, rememberPrivatePlaylist } from '@/lib/privatePlaylists';
 import { queryClient } from '@/lib/queryClient';
 import {
   addToPlaylist,
+  createPlaylist,
+  deletePlaylist,
+  noteCreatedPlaylist,
+  noteDeletedPlaylist,
+  setPlaylistPrivacy,
   removeFromPlaylist,
   fetchAlbum,
   fetchArtist,
@@ -41,7 +47,7 @@ import {
 } from './api';
 import { moveBefore } from '@/lib/moveItem';
 import { isLibrarySection, LIKED_MUSIC_PLAYLIST, type LibrarySection } from './library';
-import type { AlbumPage, ArtistPage, BrowseLink, BrowsePage, HeaderInfo, PlaylistPage, Shelf, Track } from './types';
+import type { AlbumPage, ArtistPage, BrowseLink, BrowsePage, HeaderInfo, MusicItem, PlaylistPage, Shelf, Track } from './types';
 
 // TanStack Query for every browse request (prompt §1: caching, dedupe,
 // retries). YouTube requests need the extension, so every query waits for it;
@@ -206,11 +212,13 @@ export function useLibrary(section: LibrarySection) {
   return useInfiniteQuery({ ...libraryQuery(section), enabled: signedIn });
 }
 
+const SIDEBAR_PLAYLISTS_KEY = ['music', 'library', 'sidebar-playlists'] as const;
+
 /** The sidebar's playlist list. */
 export function useLibraryPlaylists() {
   const signedIn = useSignedIn();
   return useQuery({
-    queryKey: ['music', 'library', 'sidebar-playlists'],
+    queryKey: SIDEBAR_PLAYLISTS_KEY,
     queryFn: fetchLibraryPlaylists,
     enabled: signedIn,
     staleTime: 2 * 60_000,
@@ -425,6 +433,50 @@ export function useRemoveFromPlaylist() {
     onSettled: (_data, _error, { videoId }) => {
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist'] });
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist-options', videoId] });
+    },
+  });
+}
+
+/** A new, empty, private playlist on the account (it can be made public from its page); the sidebar and Playlists page pick it up. */
+export function useCreatePlaylist() {
+  return useMutation({
+    mutationFn: (title: string) => createPlaylist(title, []),
+    onSuccess: (id, title) => {
+      // In the sidebar at once; YouTube's own list catches up a moment later (see noteCreatedPlaylist).
+      const item = noteCreatedPlaylist(id, title);
+      queryClient.setQueryData<MusicItem[]>(SIDEBAR_PLAYLISTS_KEY, (list) =>
+        list ? [item, ...list.filter((p) => p.id.replace(/^VL/, '') !== id.replace(/^VL/, ''))] : list,
+      );
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'playlist-options'] });
+    },
+  });
+}
+
+/** Makes one of the account's playlists private, unlisted (anyone with the link) or public. */
+export function useSetPlaylistPrivacy() {
+  return useMutation({
+    mutationFn: ({ playlistId, privacy }: { playlistId: string; privacy: 'private' | 'unlisted' | 'public' }) =>
+      setPlaylistPrivacy(playlistId, privacy.toUpperCase() as 'PRIVATE' | 'UNLISTED' | 'PUBLIC'),
+    onSuccess: (_result, { playlistId, privacy }) => {
+      if (privacy === 'private') rememberPrivatePlaylist(playlistId);
+      else forgetPrivatePlaylist(playlistId);
+      void queryClient.invalidateQueries({ queryKey: ['music', 'playlist'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library'] });
+    },
+  });
+}
+
+/** Deletes one of the account's playlists; the sidebar and Playlists page drop it. */
+export function useDeletePlaylist() {
+  return useMutation({
+    mutationFn: (playlistId: string) => deletePlaylist(playlistId),
+    onSuccess: (_result, playlistId) => {
+      forgetPrivatePlaylist(playlistId);
+      noteDeletedPlaylist(playlistId);
+      queryClient.setQueryData<MusicItem[]>(SIDEBAR_PLAYLISTS_KEY, (list) => list?.filter((p) => p.id.replace(/^VL/, '') !== playlistId.replace(/^VL/, '')));
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'playlist-options'] });
     },
   });
 }

@@ -1,5 +1,5 @@
-import { Check, ChevronLeft, ChevronRight, Download, ListEnd, ListMinus, ListPlus, ListStart, MoreHorizontal, Star } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { Check, ChevronLeft, ChevronRight, Download, Link2, ListEnd, ListMinus, ListPlus, ListStart, MoreHorizontal, Star } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Menu, MenuHeader, MenuItem, MenuSeparator } from '@/components/Menu';
 import {
   useAddToPlaylist,
@@ -10,6 +10,7 @@ import {
   useSignedIn,
 } from '@/data/music/queries';
 import type { Track } from '@/data/music/types';
+import { copyText, musicShareUrl } from '@/lib/share';
 import { downloadTrack } from '@/playback/download';
 import { usePlayer } from '@/state/player';
 
@@ -82,6 +83,30 @@ function AccountItems({ track, onClose, onPlaylists }: { track: Track; onClose: 
   );
 }
 
+/**
+ * Share: copies the song's YouTube Music link. The menu stays a moment to say it
+ * did ("Link copied"), then closes.
+ */
+export function ShareItem({ videoId, onClose }: { videoId: string; onClose: () => void }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+  return (
+    <MenuItem
+      icon={state === 'copied' ? <Check size={15} className="text-green" /> : <Link2 size={15} />}
+      onSelect={() => {
+        if (state !== 'idle') return;
+        void copyText(musicShareUrl(videoId)).then((ok) => {
+          setState(ok ? 'copied' : 'failed');
+          timer.current = setTimeout(onClose, ok ? 900 : 1600);
+        });
+      }}
+    >
+      {state === 'copied' ? 'Link copied' : state === 'failed' ? 'Couldn’t copy the link' : 'Share'}
+    </MenuItem>
+  );
+}
+
 function TrackMenuItems({ track, onClose, onRemove }: { track: Track; onClose: () => void; onRemove?: (() => void) | undefined }) {
   const [view, setView] = useState<'main' | 'playlists'>('main');
   const signedIn = useSignedIn();
@@ -102,6 +127,7 @@ function TrackMenuItems({ track, onClose, onRemove }: { track: Track; onClose: (
           Download
         </MenuItem>
       )}
+      <ShareItem videoId={track.videoId} onClose={onClose} />
       {signedIn && <AccountItems track={track} onClose={onClose} onPlaylists={() => setView('playlists')} />}
       {signedIn && onRemove && (
         <>
@@ -117,7 +143,7 @@ function TrackMenuItems({ track, onClose, onRemove }: { track: Track; onClose: (
 
 /**
  * The ⋯ button at the end of a track row (report §14): Play Next, Add to
- * Queue and Download for everyone; Favorite and Add to Playlist signed in, and
+ * Queue, Download and Share (copies the YouTube Music link) for everyone; Favorite and Add to Playlist signed in, and
  * Remove from Playlist where the list is one of the account's own playlists.
  */
 export function TrackMenu({ track, className, onRemove }: { track: Track; className?: string; onRemove?: (() => void) | undefined }) {

@@ -1,14 +1,19 @@
-import { useCallback, useEffect } from 'react';
-import { useParams } from 'react-router';
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate, useParams } from 'react-router';
 import { DetailHeader } from '@/components/music/DetailHeader';
 import { playList, shuffleList } from '@/components/music/play';
 import { DownloadAllButton } from '@/components/music/DownloadAllButton';
 import { PinButton } from '@/components/music/PinButton';
+import { PlaylistMoreButton } from '@/components/music/PlaylistMoreButton';
+import { PlaylistPrivacyButton, type Privacy } from '@/components/music/PlaylistPrivacyButton';
+import { ShareButton } from '@/components/music/ShareButton';
 import { LoadError, LoadMoreError, NeedsExtension } from '@/components/music/States';
 import { TrackList } from '@/components/music/TrackList';
 import { LIKED_MUSIC_PLAYLIST } from '@/data/music/library';
-import { useLibraryPlaylists, usePlaylist, useRemoveFromPlaylist, useReorderPlaylist, useYouTubeReady } from '@/data/music/queries';
-import { ytmPinKey } from '@/state/pins';
+import { useDeletePlaylist, useLibraryPlaylists, usePlaylist, useRemoveFromPlaylist, useReorderPlaylist, useSetPlaylistPrivacy, useYouTubeReady } from '@/data/music/queries';
+import { usePins, ytmPinKey } from '@/state/pins';
+import { isRememberedPrivate } from '@/lib/privatePlaylists';
+import { musicPlaylistShareUrl } from '@/lib/share';
 import { useArtworkColor } from '@/lib/artworkColor';
 import { usePageTint } from '@/lib/usePageTint';
 import { PlaylistSkeleton } from '@/skeletons/PageSkeletons';
@@ -26,6 +31,11 @@ export default function PlaylistPage() {
   const editable = bare !== LIKED_MUSIC_PLAYLIST.replace(/^VL/, '') && (mine.data ?? []).some((p) => p.id.replace(/^VL/, '') === bare);
   const remove = useRemoveFromPlaylist();
   const reorder = useReorderPlaylist();
+  const setPrivacy = useSetPlaylistPrivacy();
+  const deletion = useDeletePlaylist();
+  const navigate = useNavigate();
+  // What the user just chose, shown until the refreshed page says the same.
+  const [chosen, setChosen] = useState<{ id: string; privacy: Privacy } | null>(null);
   usePageTint(useArtworkColor(header?.thumbnail));
 
   const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = playlist;
@@ -48,6 +58,20 @@ export default function PlaylistPage() {
   if (!playlist.data || !header) return <PlaylistSkeleton />;
 
   const tracks = playlist.data.pages.flatMap((page) => page.tracks);
+  // YouTube's own word on its visibility, else what this app remembers of a playlist it made (always private).
+  const isLiked = bare === LIKED_MUSIC_PLAYLIST.replace(/^VL/, '');
+  const privacy: Privacy | null = (chosen?.id === bare ? chosen.privacy : null) ?? header.privacy ?? (isRememberedPrivate(bare) ? 'private' : null);
+  const isPrivate = !isLiked && privacy === 'private';
+  const deleteThis = () =>
+    deletion.mutate(id, {
+      onSuccess: () => {
+        // A deleted playlist can't stay pinned in the sidebar.
+        const pin = usePins.getState().pins.find((p) => p.key === ytmPinKey(id));
+        if (pin) usePins.getState().toggle(pin);
+        navigate('/library/playlists', { replace: true });
+      },
+    });
+  const changePrivacy = (next: Privacy) => setPrivacy.mutate({ playlistId: id, privacy: next }, { onSuccess: () => setChosen({ id: bare, privacy: next }) });
   const context = { source: { title: header.title, type: 'playlist' as const, id } };
   // Rows can be dragged into a new order on the account's own playlists, once every song is loaded
   // and each row carries the id YouTube needs to move it.
@@ -62,6 +86,10 @@ export default function PlaylistPage() {
         extra={
           <>
             <DownloadAllButton tracks={tracks} label={header.title} />
+            {editable && !isLiked && <PlaylistPrivacyButton privacy={privacy} pending={setPrivacy.isPending} onChange={changePrivacy} />}
+            {/* Liked Music has no page of its own to link to. */}
+            {!isLiked && <ShareButton url={musicPlaylistShareUrl(bare)} label="Share Playlist" isPrivate={isPrivate} />}
+            {editable && !isLiked && <PlaylistMoreButton title={header.title} pending={deletion.isPending} onDelete={deleteThis} />}
             <PinButton pin={{ key: ytmPinKey(id), title: header.title, thumbnail: header.thumbnail, href: `/playlist/${encodeURIComponent(id)}` }} />
           </>
         }
@@ -78,6 +106,16 @@ export default function PlaylistPage() {
       {playlist.isFetchNextPageError && <LoadMoreError onRetry={() => void fetchNextPage()} />}
       <footer className={detailFooter}>
         <p>{header.meta}</p>
+        {deletion.isError && (
+          <p className="mt-2 type-callout text-destructive" role="alert">
+            Couldn’t delete the playlist. Try again.
+          </p>
+        )}
+        {setPrivacy.isError && (
+          <p className="mt-2 type-callout text-destructive" role="alert">
+            Couldn’t change the playlist’s visibility. Try again.
+          </p>
+        )}
       </footer>
     </>
   );

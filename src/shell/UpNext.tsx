@@ -6,6 +6,7 @@ import { PrefetchLink } from '@/components/PrefetchLink';
 import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
 import { Artwork } from '@/components/music/Artwork';
 import { artistHref, formatDuration } from '@/components/music/links';
+import { ShareItem } from '@/components/music/TrackMenu';
 import { autoplaySectionStart, upcomingUserQueueIndices, type QueueEntry } from '@/playback/queue/timeline';
 import { CROSSFADE_CHOICES, usePlayer } from '@/state/player';
 
@@ -98,35 +99,42 @@ function Row({
         </span>
       </div>
       <div className="relative grid items-center justify-items-end">
-        <span className={`type-body tabular-nums text-secondary ${current ? '' : 'group-hover/row:invisible group-has-[[data-open]]/row:invisible'}`}>{formatDuration(track.durationSec)}</span>
-        {!current && (
-          <button
-            className="absolute inset-y-0 right-0 my-auto hidden size-7 place-items-center rounded-full text-key group-hover/row:grid data-open:grid"
-            aria-label={`More options for ${track.title}`}
-            aria-haspopup="menu"
-            data-open={anchor !== null || undefined}
-            onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
-          >
-            <MoreHorizontal size={16} />
-          </button>
-        )}
+        <span className="type-body tabular-nums text-secondary group-hover/row:invisible group-has-[[data-open]]/row:invisible">{formatDuration(track.durationSec)}</span>
+        <button
+          className="absolute inset-y-0 right-0 my-auto hidden size-7 place-items-center rounded-full text-key group-hover/row:grid data-open:grid"
+          aria-label={`More options for ${track.title}`}
+          aria-haspopup="menu"
+          data-open={anchor !== null || undefined}
+          onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
+        >
+          <MoreHorizontal size={16} />
+        </button>
       </div>
-      {anchor && !current && (
+      {anchor && (
         <Menu anchor={anchor} onClose={close} label={track.title}>
-          <MenuItem onSelect={() => (close(), jumpTo(at))}>Play Now</MenuItem>
-          <MenuItem
-            onSelect={() => {
-              close();
-              removeAt(at);
-              playNext([track], entry.source);
-            }}
-          >
-            Play Next
-          </MenuItem>
-          <MenuSeparator />
-          <MenuItem destructive onSelect={() => (close(), removeAt(at))}>
-            Remove from Up Next
-          </MenuItem>
+          {!current && (
+            <>
+              <MenuItem onSelect={() => (close(), jumpTo(at))}>Play Now</MenuItem>
+              <MenuItem
+                onSelect={() => {
+                  close();
+                  removeAt(at);
+                  playNext([track], entry.source);
+                }}
+              >
+                Play Next
+              </MenuItem>
+            </>
+          )}
+          <ShareItem videoId={track.videoId} onClose={close} />
+          {!current && (
+            <>
+              <MenuSeparator />
+              <MenuItem destructive onSelect={() => (close(), removeAt(at))}>
+                Remove from Up Next
+              </MenuItem>
+            </>
+          )}
         </Menu>
       )}
     </li>
@@ -214,7 +222,8 @@ export function UpNext() {
           </ol>
         </div>
       )}
-      {nowPlaying && upcoming.length > 0 && <h4 className="mx-5 mt-3 mb-0.5 type-callout-emphasized">Up Next</h4>}
+      {/* Only when something is queued ahead of AutoPlay; AutoPlay's songs sit under their own heading below. */}
+      {nowPlaying && beforeAutoplay.length > 0 && <h4 className="mx-5 mt-3 mb-0.5 type-callout-emphasized">Up Next</h4>}
 
       {upcoming.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 pb-20 text-center type-callout text-secondary">

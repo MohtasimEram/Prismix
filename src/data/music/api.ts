@@ -2,6 +2,7 @@ import type { YTMusic, YTNodes } from 'youtubei.js/web';
 import type { Candidate } from '@/playback/queue/builder';
 import { getInnertube, getMusicClient, getSignedInnertube } from '@/playback/youtube/innertube';
 import { isExactArtistMatch, normalizedArtistName } from '@/lib/artistCredits';
+import { rememberPrivatePlaylist } from '@/lib/privatePlaylists';
 import { LIBRARY_SECTIONS, LIKED_MUSIC_PLAYLIST, type LibrarySection } from './library';
 import {
   mapAlbum,
@@ -216,10 +217,53 @@ function runsText(node: unknown): string {
   return n?.runs?.map((r) => r.text ?? '').join('') ?? n?.simpleText ?? '';
 }
 
+/**
+ * Playlists made or deleted in this session. YouTube's library list can lag a
+ * moment behind (a playlist made seconds ago isn't in it yet, a deleted one still
+ * is), so these are applied over whatever it answers until it agrees.
+ */
+const madeHere = new Map<string, MusicItem>();
+const deletedHere = new Set<string>();
+
+/** The library item for a playlist just made, and the note that it should be listed. */
+export function noteCreatedPlaylist(id: string, title: string): MusicItem {
+  const item: MusicItem = {
+    kind: 'playlist',
+    id: `VL${bareId(id)}`,
+    title,
+    subtitle: 'Playlist',
+    artists: [],
+    album: null,
+    thumbnail: null,
+    wide: false,
+    durationSec: null,
+    explicit: false,
+  };
+  deletedHere.delete(bareId(id));
+  madeHere.set(bareId(id), item);
+  return item;
+}
+
+export function noteDeletedPlaylist(id: string): void {
+  madeHere.delete(bareId(id));
+  deletedHere.add(bareId(id));
+}
+
+/** YouTube's list of playlists with this session's changes applied; changes it has caught up with are dropped. */
+function withLocalPlaylistChanges(items: MusicItem[]): MusicItem[] {
+  const listed = new Set(items.map((item) => bareId(item.id)));
+  for (const id of listed) madeHere.delete(id);
+  for (const id of [...deletedHere]) if (!listed.has(id)) deletedHere.delete(id);
+  const kept = items.filter((item) => !deletedHere.has(bareId(item.id)));
+  return [...madeHere.values(), ...kept];
+}
+
 /** One library page, a page of it at a time: grids continue as grids, song lists as song lists. */
 export async function fetchLibrary(section: LibrarySection): Promise<Paged<BrowsePage>> {
   const { title, browseId } = LIBRARY_SECTIONS[section];
-  return fetchLibraryBrowse(browseId, title);
+  const page = await fetchLibraryBrowse(browseId, title);
+  if (section !== 'playlists') return page;
+  return { ...page, data: { ...page.data, grid: withLocalPlaylistChanges(page.data.grid) } };
 }
 
 async function fetchLibraryBrowse(browseId: string, title: string): Promise<Paged<BrowsePage>> {
@@ -430,21 +474,42 @@ export async function moveInPlaylist(playlistId: string, setVideoId: string, bef
   forgetPlaylistContents(playlistId);
 }
 
-/**
- * A new private playlist holding [videoIds], as YtMusicRepository.createPlaylist
- * makes one (InnerTube `playlist/create`). Returns its id, without the VL.
- */
-export async function createPlaylist(title: string, videoIds: string[], description = ''): Promise<string> {
+/** Deletes one of the account's playlists (InnerTube `playlist/delete`). The songs stay in the library; only the playlist goes. */
+export async function deletePlaylist(playlistId: string): Promise<void> {
   const yt = await getSignedInnertube();
+  await yt.actions.execute('/playlist/delete', { playlistId: bareId(playlistId), client: 'YTMUSIC' });
+}
+
+export type PlaylistPrivacy = 'PUBLIC' | 'UNLISTED' | 'PRIVATE';
+
+/** Changes who can see one of the account's playlists (InnerTube's ACTION_SET_PLAYLIST_PRIVACY). */
+export async function setPlaylistPrivacy(playlistId: string, privacy: PlaylistPrivacy): Promise<void> {
+  const yt = await getSignedInnertube();
+  await yt.actions.execute('/browse/edit_playlist', {
+    playlistId: bareId(playlistId),
+    actions: [{ action: 'ACTION_SET_PLAYLIST_PRIVACY', playlistPrivacy: privacy }],
+    client: 'YTMUSIC',
+  });
+}
+
+/**
+ * A new playlist holding [videoIds], as YtMusicRepository.createPlaylist makes
+ * one (InnerTube `playlist/create`). Private unless [privacy] says otherwise.
+ * Returns its id, without the VL.
+ */
+export async function createPlaylist(title: string, videoIds: string[], description = '', privacy: PlaylistPrivacy = 'PRIVATE'): Promise<string> {
+  const yt = await getSignedInnertube();
+  const ids = [...new Set(videoIds)];
   const response = await yt.actions.execute('/playlist/create', {
     title,
     description,
-    privacyStatus: 'PRIVATE',
-    videoIds: [...new Set(videoIds)],
+    privacyStatus: privacy,
+    ...(ids.length > 0 && { videoIds: ids }),
     client: 'YTMUSIC',
   });
   const id = (response.data as { playlistId?: string } | undefined)?.playlistId;
   if (!id) throw new Error('YouTube Music did not make the playlist');
+  if (privacy === 'PRIVATE') rememberPrivatePlaylist(id);
   return id;
 }
 

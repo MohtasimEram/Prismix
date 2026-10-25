@@ -1,5 +1,6 @@
-import { Check, ListMusic, Pin, PinOff, Settings, TriangleAlert, Users } from 'lucide-react';
+import { Check, ListMusic, Pin, PinOff, Plus, Settings, TriangleAlert, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { PrefetchLink, PrefetchNavLink } from '@/components/PrefetchLink';
 import { LogoMark } from '@/components/icons/LogoMark';
 import {
@@ -19,7 +20,7 @@ import {
 import { Artwork } from '@/components/music/Artwork';
 import { hrefFor } from '@/components/music/links';
 import { LIBRARY_SECTIONS, type LibrarySection } from '@/data/music/library';
-import { useAddToPlaylist, useLibraryPlaylists, useSignedIn } from '@/data/music/queries';
+import { useAddToPlaylist, useCreatePlaylist, useLibraryPlaylists, useSignedIn } from '@/data/music/queries';
 import { droppedTrack, isPrismixTrackDrag, useDragTrack } from '@/state/dragTrack';
 import { useSpotifyPlaylists } from '@/data/spotify/queries';
 import { useSpotifySignedIn } from '@/extension/useSpotifyAuth';
@@ -199,6 +200,90 @@ function PinnedNav({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
+/**
+ * The "Playlists" heading with a + at its end: it opens a small name field under
+ * the heading, and Create makes a new private playlist on the account and opens it.
+ */
+function PlaylistsHeader({ onNavigate }: { onNavigate: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const create = useCreatePlaylist();
+  const navigate = useNavigate();
+  const title = name.trim();
+  const cancel = () => {
+    setOpen(false);
+    setName('');
+    create.reset();
+  };
+  const submit = () => {
+    if (!title || create.isPending) return;
+    create.mutate(title, {
+      onSuccess: (id) => {
+        cancel();
+        onNavigate();
+        navigate(`/playlist/${encodeURIComponent(`VL${id}`)}`);
+      },
+    });
+  };
+  return (
+    <>
+      <div className="mt-4 mb-2 flex items-center justify-between pr-1">
+        <h2 className="px-2 py-1 type-callout-emphasized text-secondary">Playlists</h2>
+        <button
+          type="button"
+          className="group/create inline-flex h-6 items-center gap-1 rounded-pill bg-quaternary pr-2.5 pl-1.5 type-callout-emphasized text-primary transition-colors duration-150 ease-out hover:bg-quinary aria-expanded:bg-quinary"
+          aria-label="Create Playlist"
+          title="Create a new playlist"
+          aria-expanded={open}
+          onClick={() => (open ? cancel() : setOpen(true))}
+        >
+          <Plus size={15} strokeWidth={2.2} className="text-secondary transition-colors duration-150 ease-out group-hover/create:text-primary group-aria-expanded/create:text-primary" />
+          <span>Create</span>
+        </button>
+      </div>
+      {open && (
+        <div className="mb-1.5 flex flex-col gap-2 rounded-nav bg-quinary p-2">
+          <input
+            autoFocus
+            value={name}
+            maxLength={150}
+            placeholder="Playlist name"
+            aria-label="Playlist name"
+            className="h-8 w-full min-w-0 rounded-[6px] border-[0.75px] border-quaternary bg-transparent px-2 type-body text-primary outline-none placeholder:text-tertiary focus:border-key"
+            onChange={(event) => setName(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') submit();
+              else if (event.key === 'Escape') {
+                event.stopPropagation();
+                cancel();
+              }
+            }}
+          />
+          <p className="px-0.5 type-callout text-tertiary">It starts out private. You can make it public from the playlist.</p>
+          {create.isError && (
+            <p className="px-0.5 type-callout text-destructive" role="alert">
+              Couldn’t create the playlist. Try again.
+            </p>
+          )}
+          <div className="flex justify-end gap-1.5">
+            <button type="button" className="h-7 rounded-[6px] px-2.5 type-callout-emphasized text-secondary hover:bg-quaternary hover:text-primary" onClick={cancel}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="h-7 rounded-[6px] bg-key-bg px-3 type-callout-emphasized text-white disabled:opacity-40 enabled:hover:opacity-90"
+              disabled={!title || create.isPending}
+              onClick={submit}
+            >
+              {create.isPending ? 'Creating…' : 'Create'}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Library and Playlists (report §1), once YouTube requests are made as the user. */
 function LibraryNav({ onNavigate }: { onNavigate: () => void }) {
   const playlists = useLibraryPlaylists();
@@ -220,7 +305,7 @@ function LibraryNav({ onNavigate }: { onNavigate: () => void }) {
     <>
       <h2 className={sectionHeader}>Library</h2>
       <NavList items={LIBRARY} onNavigate={onNavigate} />
-      <h2 className={sectionHeader}>Playlists</h2>
+      <PlaylistsHeader onNavigate={onNavigate} />
       <ul className={list}>
         <li>
           <PrefetchNavLink to="/library/playlists" className={item} onClick={onNavigate}>

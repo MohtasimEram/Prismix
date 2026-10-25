@@ -92,6 +92,8 @@ export interface HeaderInfo {
    * it saves and whether it already is. Only meaningful signed in.
    */
   library: { playlistId: string; saved: boolean } | null;
+  /** A playlist's visibility, where YouTube says; only "private" ones can't be opened from a shared link. */
+  privacy?: 'public' | 'unlisted' | 'private' | null | undefined;
 }
 
 export interface AlbumPage extends HeaderInfo {
