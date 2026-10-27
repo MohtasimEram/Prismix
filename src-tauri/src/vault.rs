@@ -212,6 +212,35 @@ impl Vault {
         })
     }
 
+    /// The generation of a service's saved session (0 when there is none).
+    pub fn generation(&self, service: Service) -> u64 {
+        self.with(|s| s.entry(service).generation)
+    }
+
+    /// Folds the cookies a response set into the saved session, so the rotated
+    /// ones Google hands out (the `__Secure-*PSIDTS` family) aren't lost; a
+    /// session that never takes them in stops being accepted after a while.
+    /// Only applies while the session is still the one the request went out
+    /// with (`generation`), and never moves the generation: nothing signed in
+    /// or out, so the page has nothing to re-read.
+    pub fn merge_cookies(&self, service: Service, generation: u64, host: &str, set_cookies: &[String]) {
+        if set_cookies.is_empty() {
+            return;
+        }
+        self.with(|stored| {
+            let entry = stored.entry(service);
+            if entry.generation != generation {
+                return;
+            }
+            let Some(existing) = entry.cookies.as_deref() else { return };
+            let Some(merged) = merge_set_cookies(existing, set_cookies, host) else { return };
+            entry.cookies = Some(merged);
+            if let Err(error) = self.persist(stored) {
+                log::warn!("couldn't save the refreshed session cookies: {error}");
+            }
+        });
+    }
+
     pub fn sessions(&self) -> Sessions {
         self.with(|s| sessions_of(s))
     }
@@ -220,6 +249,76 @@ impl Vault {
 fn sessions_of(stored: &Stored) -> Sessions {
     let of = |e: &Entry| ServiceSession { signed_in: e.cookies.is_some(), generation: e.generation };
     Sessions { youtube: of(&stored.youtube), spotify: of(&stored.spotify) }
+}
+
+const MAX_COOKIE_HEADER: usize = 16 * 1024;
+/// A response may not delete these: a stray answer must not be able to sign the app out.
+const KEEP_COOKIES: [&str; 3] = ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID"];
+
+fn cookie_name_ok(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 128 && name.bytes().all(|b| b.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?={}".contains(&b))
+}
+
+fn cookie_value_ok(value: &str) -> bool {
+    value.len() <= 4096 && value.bytes().all(|b| b.is_ascii_graphic() && b != b';' && b != b',' && b != b'\\')
+}
+
+/// Whether a cookie scoped to `domain` may be taken from a response of `host`: it covers the host, and stays under Google's or YouTube's own domains.
+fn domain_ok(domain: &str, host: &str) -> bool {
+    let domain = domain.trim_start_matches('.').to_ascii_lowercase();
+    let host = host.to_ascii_lowercase();
+    let covers = host == domain || host.ends_with(&format!(".{domain}"));
+    let ours = ["google.com", "youtube.com"].iter().any(|root| domain == *root || domain.ends_with(&format!(".{root}")));
+    covers && ours
+}
+
+/// [existing] (a `Cookie` header) with the `Set-Cookie` lines of one response applied; `None` when nothing changes.
+pub fn merge_set_cookies(existing: &str, set_cookies: &[String], host: &str) -> Option<String> {
+    let mut pairs: Vec<(String, String)> = existing
+        .split(';')
+        .filter_map(|part| part.trim().split_once('=').map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned())))
+        .filter(|(k, _)| !k.is_empty())
+        .collect();
+    let before = pairs.clone();
+
+    for line in set_cookies.iter().take(64) {
+        let mut parts = line.split(';');
+        let Some((name, value)) = parts.next().and_then(|first| first.split_once('=')) else { continue };
+        let (name, value) = (name.trim(), value.trim().trim_matches('"'));
+        if !cookie_name_ok(name) || !cookie_value_ok(value) {
+            continue;
+        }
+        let mut expired = value.is_empty();
+        let mut allowed = true;
+        for attribute in parts {
+            let (key, val) = attribute.trim().split_once('=').unwrap_or((attribute.trim(), ""));
+            match key.to_ascii_lowercase().as_str() {
+                "domain" if !domain_ok(val, host) => allowed = false,
+                "max-age" if val.trim().parse::<i64>().is_ok_and(|n| n <= 0) => expired = true,
+                "expires" if val.contains("1970") || val.contains("1601") => expired = true,
+                _ => {}
+            }
+        }
+        if !allowed {
+            continue;
+        }
+        if expired {
+            if !KEEP_COOKIES.contains(&name) {
+                pairs.retain(|(k, _)| k != name);
+            }
+            continue;
+        }
+        match pairs.iter_mut().find(|(k, _)| k == name) {
+            Some(slot) => slot.1 = value.to_owned(),
+            None => pairs.push((name.to_owned(), value.to_owned())),
+        }
+    }
+
+    if pairs == before {
+        return None;
+    }
+    let merged = pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("; ");
+    (merged.len() <= MAX_COOKIE_HEADER).then_some(merged)
 }
 
 fn decrypt(key: &[u8; 32], bytes: &[u8]) -> Option<Stored> {
@@ -234,6 +333,27 @@ fn decrypt(key: &[u8; 32], bytes: &[u8]) -> Option<Stored> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merges_rotated_cookies() {
+        let host = "music.youtube.com";
+        let existing = "SID=a; SAPISID=s; __Secure-1PSIDTS=old";
+        let lines = vec![
+            "__Secure-1PSIDTS=new; Domain=.youtube.com; Path=/; Secure; HttpOnly".to_owned(),
+            "NEWONE=1; Path=/".to_owned(),
+        ];
+        assert_eq!(merge_set_cookies(existing, &lines, host).unwrap(), "SID=a; SAPISID=s; __Secure-1PSIDTS=new; NEWONE=1");
+        // Nothing changed: nothing to save.
+        assert!(merge_set_cookies(existing, &["SID=a; Path=/".to_owned()], host).is_none());
+        // Deleted cookies go, except the signing ones.
+        let gone = vec!["SID=; Max-Age=0".to_owned(), "SAPISID=x; Expires=Thu, 01 Jan 1970 00:00:00 GMT".to_owned()];
+        assert_eq!(merge_set_cookies(existing, &gone, host).unwrap(), "SAPISID=s; __Secure-1PSIDTS=old");
+        // A domain that isn't ours, or doesn't cover the host, is ignored.
+        assert!(merge_set_cookies(existing, &["X=1; Domain=evil.example".to_owned()], host).is_none());
+        assert!(merge_set_cookies(existing, &["X=1; Domain=www.youtube.com".to_owned()], host).is_none());
+        // Malformed lines are skipped.
+        assert!(merge_set_cookies(existing, &["bad cookie".to_owned(), "a b=1".to_owned()], host).is_none());
+    }
 
     #[test]
     fn round_trip() {

@@ -1,5 +1,5 @@
 import { party, useParty } from '@/party/listenTogether';
-import { Infinity as InfinityIcon, MoreHorizontal, X } from 'lucide-react';
+import { Infinity as InfinityIcon, ListMinus, ListStart, MoreHorizontal, Play, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { Menu, MenuHeader, MenuItem, MenuSeparator } from '@/components/Menu';
 import { PrefetchLink } from '@/components/PrefetchLink';
@@ -114,8 +114,11 @@ function Row({
         <Menu anchor={anchor} onClose={close} label={track.title}>
           {!current && (
             <>
-              <MenuItem onSelect={() => (close(), jumpTo(at))}>Play Now</MenuItem>
+              <MenuItem icon={<Play size={15} />} onSelect={() => (close(), jumpTo(at))}>
+                Play Now
+              </MenuItem>
               <MenuItem
+                icon={<ListStart size={15} />}
                 onSelect={() => {
                   close();
                   removeAt(at);
@@ -130,7 +133,7 @@ function Row({
           {!current && (
             <>
               <MenuSeparator />
-              <MenuItem destructive onSelect={() => (close(), removeAt(at))}>
+              <MenuItem icon={<ListMinus size={15} />} destructive onSelect={() => (close(), removeAt(at))}>
                 Remove from Up Next
               </MenuItem>
             </>

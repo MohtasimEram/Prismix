@@ -10,7 +10,9 @@
 //! - no cookie jar: requests are anonymous unless the page names a signed-in
 //!   identity, and then only YouTube's InnerTube / Spotify's token endpoint
 //!   get the session from the vault, without following redirects;
-//! - `Set-Cookie` never reaches the page; responses are capped in size.
+//! - `Set-Cookie` never reaches the page (a signed-in YouTube request's go
+//!   into the vault, so the session's rotated cookies are kept); responses are
+//!   capped in size.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -28,7 +30,7 @@ use url::Url;
 use crate::error::{AppError, AppResult};
 use crate::netguard::{check_url, resolver};
 use crate::rules;
-use crate::vault::Vault;
+use crate::vault::{Service, Vault};
 
 const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 16 * 1024 * 1024;
@@ -148,6 +150,9 @@ async fn perform(net: &Net, vault: &Vault, request: FetchRequest) -> AppResult<V
         _ => None,
     };
 
+    // A signed-in YouTube request may come back with refreshed session cookies (kept below).
+    let youtube_session = matches!(request.auth, Some(NativeAuth::Youtube { .. })).then(|| vault.generation(Service::Youtube));
+
     let timeout = Duration::from_millis(request.timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).clamp(1_000, 180_000));
     let client = if signed { &net.signed } else { &net.open };
     let mut builder = client.request(method, url.clone()).headers(headers).timeout(timeout);
@@ -159,6 +164,11 @@ async fn perform(net: &Net, vault: &Vault, request: FetchRequest) -> AppResult<V
     let status = response.status();
     let final_url = response.url().to_string();
     let redirected = response.url() != &url;
+    if let Some(generation) = youtube_session {
+        let set_cookies: Vec<String> =
+            response.headers().get_all(reqwest::header::SET_COOKIE).iter().filter_map(|v| v.to_str().ok().map(str::to_owned)).collect();
+        vault.merge_cookies(Service::Youtube, generation, url.host_str().unwrap_or(""), &set_cookies);
+    }
     let response_headers: Vec<(String, String)> = response
         .headers()
         .iter()

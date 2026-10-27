@@ -234,12 +234,23 @@ async function readAccounts(): Promise<Accounts> {
 let cache: (Accounts & { at: number; generation: number }) | null = null;
 let reading: Promise<Accounts> | null = null;
 
+const RETRY_DELAY_MS = 1_500;
+
+/** One read, and one more shortly after when no account came back: a hiccup (a dropped request, a rate limit) shouldn't read as signed out. */
+async function readAccountsWithRetry(): Promise<Accounts> {
+  const first = await readAccounts();
+  if (first.list.length) return first;
+  await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+  return readAccounts();
+}
+
 async function accounts(refresh: boolean): Promise<Accounts> {
   const { generation } = (await sessions()).youtube;
   if (!refresh && cache && cache.generation === generation && Date.now() - cache.at < ACCOUNTS_TTL_MS) return cache;
-  reading ??= readAccounts()
+  reading ??= readAccountsWithRetry()
     .then((read) => {
-      cache = { ...read, at: Date.now(), generation };
+      // A read that found nobody isn't kept: the next one tries again instead of waiting out the TTL.
+      cache = read.list.length ? { ...read, at: Date.now(), generation } : null;
       return read;
     })
     .finally(() => (reading = null));

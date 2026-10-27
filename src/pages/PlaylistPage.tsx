@@ -5,8 +5,7 @@ import { playList, shuffleList } from '@/components/music/play';
 import { DownloadAllButton } from '@/components/music/DownloadAllButton';
 import { PinButton } from '@/components/music/PinButton';
 import { PlaylistMoreButton } from '@/components/music/PlaylistMoreButton';
-import { PlaylistPrivacyButton, type Privacy } from '@/components/music/PlaylistPrivacyButton';
-import { ShareButton } from '@/components/music/ShareButton';
+import type { Privacy } from '@/components/music/playlistPrivacy';
 import { LoadError, LoadMoreError, NeedsExtension } from '@/components/music/States';
 import { TrackList } from '@/components/music/TrackList';
 import { LIKED_MUSIC_PLAYLIST } from '@/data/music/library';
@@ -61,7 +60,6 @@ export default function PlaylistPage() {
   // YouTube's own word on its visibility, else what this app remembers of a playlist it made (always private).
   const isLiked = bare === LIKED_MUSIC_PLAYLIST.replace(/^VL/, '');
   const privacy: Privacy | null = (chosen?.id === bare ? chosen.privacy : null) ?? header.privacy ?? (isRememberedPrivate(bare) ? 'private' : null);
-  const isPrivate = !isLiked && privacy === 'private';
   const deleteThis = () =>
     deletion.mutate(id, {
       onSuccess: () => {
@@ -86,11 +84,21 @@ export default function PlaylistPage() {
         extra={
           <>
             <DownloadAllButton tracks={tracks} label={header.title} />
-            {editable && !isLiked && <PlaylistPrivacyButton privacy={privacy} pending={setPrivacy.isPending} onChange={changePrivacy} />}
-            {/* Liked Music has no page of its own to link to. */}
-            {!isLiked && <ShareButton url={musicPlaylistShareUrl(bare)} label="Share Playlist" isPrivate={isPrivate} />}
-            {editable && !isLiked && <PlaylistMoreButton title={header.title} pending={deletion.isPending} onDelete={deleteThis} />}
             <PinButton pin={{ key: ytmPinKey(id), title: header.title, thumbnail: header.thumbnail, href: `/playlist/${encodeURIComponent(id)}` }} />
+            {/* Liked Music has no page of its own to share, and nothing in it to rename or delete. */}
+            {!isLiked && (
+              <PlaylistMoreButton
+                playlistId={id}
+                title={header.title}
+                shareUrl={musicPlaylistShareUrl(bare)}
+                editable={editable}
+                privacy={privacy}
+                privacyPending={setPrivacy.isPending}
+                onPrivacy={changePrivacy}
+                deletePending={deletion.isPending}
+                onDelete={deleteThis}
+              />
+            )}
           </>
         }
       />

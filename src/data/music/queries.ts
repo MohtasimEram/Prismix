@@ -17,6 +17,7 @@ import {
   addToPlaylist,
   createPlaylist,
   deletePlaylist,
+  renamePlaylist,
   noteCreatedPlaylist,
   noteDeletedPlaylist,
   setPlaylistPrivacy,
@@ -463,6 +464,30 @@ export function useSetPlaylistPrivacy() {
       else forgetPrivatePlaylist(playlistId);
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist'] });
       void queryClient.invalidateQueries({ queryKey: ['music', 'library'] });
+    },
+  });
+}
+
+/** Renames one of the account's playlists; its page, the sidebar and the Playlists page show the new name at once. */
+export function useRenamePlaylist() {
+  return useMutation({
+    mutationFn: ({ playlistId, name }: { playlistId: string; name: string }) => renamePlaylist(playlistId, name),
+    onSuccess: (_result, { playlistId, name }) => {
+      const clean = name.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+      const bare = playlistId.replace(/^VL/, '');
+      const same = (key: readonly unknown[]) => typeof key[2] === 'string' && key[2].replace(/^VL/, '') === bare;
+      queryClient.setQueriesData<InfiniteData<PlaylistChunk>>(
+        { queryKey: ['music', 'playlist'], predicate: (query) => same(query.queryKey) },
+        (data) =>
+          data && {
+            ...data,
+            pages: data.pages.map((page) => (page.header ? { ...page, header: { ...page.header, title: clean } } : page)),
+          },
+      );
+      queryClient.setQueryData<MusicItem[]>(SIDEBAR_PLAYLISTS_KEY, (list) => list?.map((p) => (p.id.replace(/^VL/, '') === bare ? { ...p, title: clean } : p)));
+      void queryClient.invalidateQueries({ queryKey: ['music', 'library'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'playlist'] });
+      void queryClient.invalidateQueries({ queryKey: ['music', 'playlist-options'] });
     },
   });
 }

@@ -480,6 +480,21 @@ export async function deletePlaylist(playlistId: string): Promise<void> {
   await yt.actions.execute('/playlist/delete', { playlistId: bareId(playlistId), client: 'YTMUSIC' });
 }
 
+/** YouTube's limit on a playlist's name. */
+export const PLAYLIST_NAME_MAX = 150;
+
+/** Renames one of the account's playlists (InnerTube's ACTION_SET_PLAYLIST_NAME). */
+export async function renamePlaylist(playlistId: string, name: string): Promise<void> {
+  const clean = name.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!clean || clean.length > PLAYLIST_NAME_MAX) throw new Error('A playlist name is 1 to 150 characters');
+  const yt = await getSignedInnertube();
+  await yt.actions.execute('/browse/edit_playlist', {
+    playlistId: bareId(playlistId),
+    actions: [{ action: 'ACTION_SET_PLAYLIST_NAME', playlistName: clean }],
+    client: 'YTMUSIC',
+  });
+}
+
 export type PlaylistPrivacy = 'PUBLIC' | 'UNLISTED' | 'PRIVATE';
 
 /** Changes who can see one of the account's playlists (InnerTube's ACTION_SET_PLAYLIST_PRIVACY). */
