@@ -7,6 +7,7 @@ const COMMANDS: &[&str] = &[
     "auth_sign_in",
     "auth_sign_out",
     "auth_import_cookies",
+    "diag_log",
     "net_fetch",
     "net_abort",
     "ws_open",

@@ -15,15 +15,16 @@
 //!   capped in size.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{redirect, Client, Method};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Response;
-use tauri::State;
+use tauri::{AppHandle, State};
 use tokio::sync::oneshot;
 use url::Url;
 
@@ -116,10 +117,11 @@ fn header_map(pairs: &[(String, String)]) -> HeaderMap {
     map
 }
 
-async fn perform(net: &Net, vault: &Vault, request: FetchRequest) -> AppResult<Vec<u8>> {
+async fn perform(app: &AppHandle, net: &Net, vault: &Vault, request: FetchRequest) -> AppResult<Vec<u8>> {
     let url = Url::parse(&request.url).map_err(|_| AppError::invalid("Not a valid URL"))?;
     check_url(&url, false)?;
     let method = Method::from_bytes(request.method.to_ascii_uppercase().as_bytes()).map_err(|_| AppError::invalid("Bad method"))?;
+    let method_name = method.to_string();
     if matches!(method.as_str(), "CONNECT" | "TRACE" | "TRACK") {
         return Err(AppError::invalid("Method not allowed"));
     }
@@ -164,10 +166,18 @@ async fn perform(net: &Net, vault: &Vault, request: FetchRequest) -> AppResult<V
     let status = response.status();
     let final_url = response.url().to_string();
     let redirected = response.url() != &url;
+    if youtube_session.is_some() {
+        log_youtube_response(&method_name, &url, response.status(), response.headers());
+    }
     if let Some(generation) = youtube_session {
         let set_cookies: Vec<String> =
             response.headers().get_all(reqwest::header::SET_COOKIE).iter().filter_map(|v| v.to_str().ok().map(str::to_owned)).collect();
-        vault.merge_cookies(Service::Youtube, generation, url.host_str().unwrap_or(""), &set_cookies);
+        // Google deleting the login's cookies means it no longer accepts the session: renew it from the
+        // sign-in profile (keeper.rs) before the page decides it is signed out.
+        if vault.merge_cookies(Service::Youtube, generation, url.host_str().unwrap_or(""), &set_cookies) {
+            log::warn!("YouTube ended the saved session (it deleted the login's cookies on {}); renewing it from the sign-in profile", url.host_str().unwrap_or("?"));
+            crate::keeper::renew_soon(app);
+        }
     }
     let response_headers: Vec<(String, String)> = response
         .headers()
@@ -205,6 +215,83 @@ async fn perform(net: &Net, vault: &Vault, request: FetchRequest) -> AppResult<V
     Ok(out)
 }
 
+/// Unix seconds of an HTTP `Date` header (`Sun, 06 Nov 1994 08:49:37 GMT`).
+fn parse_http_date(value: &str) -> Option<i64> {
+    let rest = value.split_once(", ")?.1;
+    let mut parts = rest.split(' ');
+    let day: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = match parts.next()? {
+        "Jan" => 1,
+        "Feb" => 2,
+        "Mar" => 3,
+        "Apr" => 4,
+        "May" => 5,
+        "Jun" => 6,
+        "Jul" => 7,
+        "Aug" => 8,
+        "Sep" => 9,
+        "Oct" => 10,
+        "Nov" => 11,
+        "Dec" => 12,
+        _ => return None,
+    };
+    let year: i64 = parts.next()?.parse().ok()?;
+    let mut clock = parts.next()?.split(':');
+    let hours: i64 = clock.next()?.parse().ok()?;
+    let minutes: i64 = clock.next()?.parse().ok()?;
+    let seconds: i64 = clock.next()?.parse().ok()?;
+    // Days since 1970-01-01 (the civil-calendar algorithm, March-based years).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = y.div_euclid(400);
+    let year_of_era = y - era * 400;
+    let month_from_march = (month + 9) % 12;
+    let day_of_year = (153 * month_from_march + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    Some(days * 86_400 + hours * 3_600 + minutes * 60 + seconds)
+}
+
+/// How many of the odd YouTube answers have been written to the log this run (it stops at a cap so a bad spell can't flood it).
+static YOUTUBE_LOGGED: AtomicUsize = AtomicUsize::new(0);
+const YOUTUBE_LOG_CAP: usize = 60;
+
+/// The log's account of a signed-in YouTube request: the first one of the run, and any that
+/// came back with an error, a redirect (to a sign-in page, usually) or a clock that disagrees
+/// with the server's. Paths only, never query strings, headers' values or cookies: when a session
+/// stops working, this is what shows whether it was refused, bounced or never reached.
+fn log_youtube_response(method: &str, url: &Url, status: reqwest::StatusCode, headers: &HeaderMap) {
+    let skew = headers
+        .get(reqwest::header::DATE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_http_date)
+        .and_then(|server| SystemTime::now().duration_since(UNIX_EPOCH).ok().map(|now| now.as_secs() as i64 - server));
+    let clock_off = skew.is_some_and(|s| s.abs() > 120);
+    let bounced_to = headers.get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()).and_then(|v| Url::options().base_url(Some(url)).parse(v).ok());
+    let notable = !status.is_success() || clock_off;
+    if !notable && YOUTUBE_LOGGED.load(Ordering::Relaxed) > 0 {
+        return;
+    }
+    if YOUTUBE_LOGGED.fetch_add(1, Ordering::Relaxed) >= YOUTUBE_LOG_CAP {
+        return;
+    }
+    let target = format!("{}{}", url.host_str().unwrap_or("?"), url.path());
+    let mut line = format!("signed YouTube request {method} {target} -> {}", status.as_u16());
+    if let Some(to) = bounced_to {
+        line.push_str(&format!(", redirected to {}{}", to.host_str().unwrap_or("?"), to.path()));
+    }
+    if let Some(skew) = skew {
+        line.push_str(&format!("; this PC's clock is {skew:+}s from the server's"));
+    }
+    if clock_off {
+        line.push_str(" (too far off: signed requests can be refused for it)");
+    }
+    if notable {
+        log::warn!("{line}");
+    } else {
+        log::info!("{line}");
+    }
+}
+
 fn describe(error: reqwest::Error) -> AppError {
     if error.is_timeout() {
         return AppError::new("timeout", "The request timed out");
@@ -221,13 +308,13 @@ fn describe(error: reqwest::Error) -> AppError {
 }
 
 #[tauri::command]
-pub async fn net_fetch(net: State<'_, Net>, vault: State<'_, Vault>, request: FetchRequest) -> Result<Response, AppError> {
+pub async fn net_fetch(app: AppHandle, net: State<'_, Net>, vault: State<'_, Vault>, request: FetchRequest) -> Result<Response, AppError> {
     let id = request.id;
     let (cancel, cancelled) = oneshot::channel::<()>();
     // A reused id (the page reloaded mid-request) drops the old sender, which cancels the old request.
     net.in_flight.lock().unwrap_or_else(|e| e.into_inner()).insert(id, cancel);
     let result = tokio::select! {
-        result = perform(&net, &vault, request) => result,
+        result = perform(&app, &net, &vault, request) => result,
         _ = cancelled => Err(AppError::new("aborted", "The request was aborted")),
     };
     net.in_flight.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
@@ -238,5 +325,17 @@ pub async fn net_fetch(net: State<'_, Net>, vault: State<'_, Vault>, request: Fe
 pub fn net_abort(net: State<'_, Net>, id: u64) {
     if let Some(cancel) = net.in_flight.lock().unwrap_or_else(|e| e.into_inner()).remove(&id) {
         let _ = cancel.send(());
+    }
+}
+
+#[cfg(test)]
+mod date_tests {
+    use super::parse_http_date;
+
+    #[test]
+    fn reads_http_dates() {
+        assert_eq!(parse_http_date("Sun, 06 Nov 1994 08:49:37 GMT"), Some(784_111_777));
+        assert_eq!(parse_http_date("Thu, 01 Jan 1970 00:00:00 GMT"), Some(0));
+        assert_eq!(parse_http_date("not a date"), None);
     }
 }

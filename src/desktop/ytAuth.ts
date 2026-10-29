@@ -1,6 +1,7 @@
 import type { YtAccount, YtAuthState, YtChannel } from '@/bridge';
+import { diagLog } from './diag';
 import { nativeFetch } from './nativeFetch';
-import { sessions } from './session';
+import { onSessionsChanged, sessions } from './session';
 
 /**
  * YouTube Music sign-in, desktop edition: a port of the extension's
@@ -234,23 +235,77 @@ async function readAccounts(): Promise<Accounts> {
 let cache: (Accounts & { at: number; generation: number }) | null = null;
 let reading: Promise<Accounts> | null = null;
 
-const RETRY_DELAY_MS = 1_500;
+const KEEPER_RENEWAL_TIMEOUT_MS = 6_000;
 
-/** One read, and one more shortly after when no account came back: a hiccup (a dropped request, a rate limit) shouldn't read as signed out. */
+/**
+ * Reads accounts, with retry: when the saved session has stale tokens, YouTube
+ * rejects the request and the desktop's keeper automatically renews the session
+ * in the background (keeper.rs). We wait for that renewal before giving up,
+ * so the UI doesn't flicker a transient "Retry Sign-In" state.
+ */
 async function readAccountsWithRetry(): Promise<Accounts> {
+  const initialSession = (await sessions()).youtube;
   const first = await readAccounts();
-  if (first.list.length) return first;
-  await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-  return readAccounts();
+  if (first.list.length) {
+    diagLog('info', `YouTube account read ok: ${first.list.length} account(s)`);
+    return first;
+  }
+
+  // If there's no saved session in the vault, we are simply signed out.
+  if (!initialSession.signedIn) {
+    return first;
+  }
+
+  diagLog('warn', `YouTube account read found no account (${problem ?? 'no reason'}); waiting for keeper renewal or retry`);
+
+  // Did the keeper finish renewal while `first` was in-flight?
+  const currentSession = (await sessions()).youtube;
+  if (currentSession.generation !== initialSession.generation) {
+    diagLog('info', 'YouTube session was renewed while reading; retrying immediately');
+    const second = await readAccounts();
+    diagLog(
+      second.list.length ? 'info' : 'warn',
+      second.list.length
+        ? `YouTube account read ok on generation change: ${second.list.length} account(s)`
+        : `YouTube account read failed again: ${problem ?? 'no reason'}`,
+    );
+    return second;
+  }
+
+  // Wait for keeper renewal (onSessionsChanged) or timeout:
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      unsubscribe();
+      resolve();
+    };
+    const unsubscribe = onSessionsChanged((_, changed) => {
+      if (changed.includes('youtube')) finish();
+    });
+    const timer = setTimeout(finish, KEEPER_RENEWAL_TIMEOUT_MS);
+  });
+
+  const second = await readAccounts();
+  diagLog(
+    second.list.length ? 'info' : 'warn',
+    second.list.length
+      ? `YouTube account read ok after waiting: ${second.list.length} account(s)`
+      : `YouTube account read failed again: ${problem ?? 'no reason'}`,
+  );
+  return second;
 }
 
 async function accounts(refresh: boolean): Promise<Accounts> {
   const { generation } = (await sessions()).youtube;
   if (!refresh && cache && cache.generation === generation && Date.now() - cache.at < ACCOUNTS_TTL_MS) return cache;
   reading ??= readAccountsWithRetry()
-    .then((read) => {
+    .then(async (read) => {
+      const currentGen = (await sessions()).youtube.generation;
       // A read that found nobody isn't kept: the next one tries again instead of waiting out the TTL.
-      cache = read.list.length ? { ...read, at: Date.now(), generation } : null;
+      cache = read.list.length ? { ...read, at: Date.now(), generation: currentGen } : null;
       return read;
     })
     .finally(() => (reading = null));

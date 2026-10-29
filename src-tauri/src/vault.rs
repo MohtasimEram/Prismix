@@ -124,25 +124,29 @@ fn new_key() -> Zeroizing<[u8; 32]> {
 }
 
 /// The vault key: the OS credential store first, a private file only as a fallback.
-fn load_key(dir: &Path) -> Zeroizing<[u8; 32]> {
+///
+/// Also says where the key came from, for the log: a key that suddenly comes
+/// from somewhere new can't open a vault written with the old one.
+fn load_key(dir: &Path) -> (Zeroizing<[u8; 32]>, &'static str) {
     let key_file = dir.join(KEY_FILE);
     if let Ok(encoded) = fs::read_to_string(&key_file) {
         if let Some(key) = decode_key(&encoded) {
-            return key;
+            return (key, "key file");
         }
     }
     if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
         match entry.get_password() {
             Ok(encoded) => {
                 if let Some(key) = decode_key(&encoded) {
-                    return key;
+                    return (key, "credential store");
                 }
+                log::warn!("the credential store's vault key is unreadable; making a new one");
             }
             Err(keyring::Error::NoEntry) => {
                 let key = new_key();
                 let encoded = Zeroizing::new(base64::engine::general_purpose::STANDARD.encode(key.as_ref()));
                 if entry.set_password(&encoded).is_ok() {
-                    return key;
+                    return (key, "new key in the credential store");
                 }
             }
             Err(error) => log::warn!("credential store unavailable ({error}); using a key file"),
@@ -153,15 +157,40 @@ fn load_key(dir: &Path) -> Zeroizing<[u8; 32]> {
     if let Err(error) = write_private(&key_file, encoded.as_bytes()) {
         log::error!("couldn't save the vault key: {error}");
     }
-    key
+    (key, "new key file")
+}
+
+/// The names (never the values) of the cookies in a `Cookie` header.
+fn cookie_names(header: &str) -> Vec<&str> {
+    header.split(';').filter_map(|part| part.trim().split_once('=').map(|(name, _)| name.trim())).filter(|n| !n.is_empty()).collect()
 }
 
 impl Vault {
     pub fn open(dir: &Path) -> AppResult<Self> {
         fs::create_dir_all(dir)?;
-        let key = load_key(dir);
+        let (key, key_source) = load_key(dir);
         let path = dir.join(VAULT_FILE);
-        let data = fs::read(&path).ok().and_then(|bytes| decrypt(&key, &bytes)).unwrap_or_default();
+        let data = match fs::read(&path) {
+            Ok(bytes) => decrypt(&key, &bytes).unwrap_or_else(|| {
+                log::error!("the saved vault couldn't be decrypted (key from the {key_source}); starting signed out");
+                Stored::default()
+            }),
+            Err(_) => Stored::default(),
+        };
+        // What's saved, by name only: enough to see a session that's there but incomplete.
+        match data.youtube.cookies.as_deref() {
+            Some(cookies) => {
+                let names = cookie_names(cookies);
+                log::info!(
+                    "vault opened (key from the {key_source}): YouTube session #{} with {} cookies, signing cookie {}: {}",
+                    data.youtube.generation,
+                    names.len(),
+                    if names.iter().any(|n| KEEP_COOKIES.contains(n)) { "present" } else { "MISSING" },
+                    names.join(", "),
+                );
+            }
+            None => log::info!("vault opened (key from the {key_source}): no YouTube session saved"),
+        }
         Ok(Self { path, key, data: Mutex::new(data) })
     }
 
@@ -223,10 +252,15 @@ impl Vault {
     /// Only applies while the session is still the one the request went out
     /// with (`generation`), and never moves the generation: nothing signed in
     /// or out, so the page has nothing to re-read.
-    pub fn merge_cookies(&self, service: Service, generation: u64, host: &str, set_cookies: &[String]) {
+    ///
+    /// Returns true when the response deleted one of the session's own cookies
+    /// (`SID`, `__Secure-1PSID`, `__Secure-3PSID`): that is Google saying it no
+    /// longer accepts this session, and the caller should try to renew it (keeper.rs).
+    pub fn merge_cookies(&self, service: Service, generation: u64, host: &str, set_cookies: &[String]) -> bool {
         if set_cookies.is_empty() {
-            return;
+            return false;
         }
+        let rejected = deletes_session(set_cookies, host);
         self.with(|stored| {
             let entry = stored.entry(service);
             if entry.generation != generation {
@@ -234,11 +268,44 @@ impl Vault {
             }
             let Some(existing) = entry.cookies.as_deref() else { return };
             let Some(merged) = merge_set_cookies(existing, set_cookies, host) else { return };
+            log::info!("YouTube session cookies refreshed by {host}: {}", describe_change(existing, &merged));
             entry.cookies = Some(merged);
             if let Err(error) = self.persist(stored) {
                 log::warn!("couldn't save the refreshed session cookies: {error}");
             }
         });
+        rejected
+    }
+
+    /// Replaces the saved YouTube cookies with a fresher copy of the same login, read from the
+    /// sign-in window's own browser profile after it has visited YouTube Music (keeper.rs).
+    ///
+    /// Does nothing when signed out, or when the session changed since `generation` (a sign-in or
+    /// sign-out happened meanwhile): a late copy must never bring back a session that was ended.
+    /// Returns the new sessions only when the login itself changed (its identity cookies), which
+    /// moves the generation so the page re-reads the account; a copy that only carries newer
+    /// rotation tokens is saved quietly, as `merge_cookies` does.
+    pub fn adopt_fresh_cookies(&self, service: Service, generation: u64, cookies: String) -> Option<Sessions> {
+        self.with(|stored| {
+            let entry = stored.entry(service);
+            if entry.generation != generation {
+                return None;
+            }
+            let existing = entry.cookies.as_deref()?;
+            if existing == cookies {
+                return None;
+            }
+            let login_changed = LOGIN_COOKIES.iter().any(|name| cookie_in(existing, name) != cookie_in(&cookies, name));
+            log::info!("YouTube session renewed from the sign-in profile: {}", describe_change(existing, &cookies));
+            entry.cookies = Some(cookies);
+            if login_changed {
+                entry.generation = (entry.generation + 1).max(now_ms());
+            }
+            if let Err(error) = self.persist(stored) {
+                log::warn!("couldn't save the renewed session cookies: {error}");
+            }
+            login_changed.then(|| sessions_of(stored))
+        })
     }
 
     pub fn sessions(&self) -> Sessions {
@@ -254,6 +321,15 @@ fn sessions_of(stored: &Stored) -> Sessions {
 const MAX_COOKIE_HEADER: usize = 16 * 1024;
 /// A response may not delete these: a stray answer must not be able to sign the app out.
 const KEEP_COOKIES: [&str; 3] = ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID"];
+/// The cookies that say which Google login this is. A response that deletes one has ended the session.
+const SESSION_COOKIES: [&str; 3] = ["SID", "__Secure-1PSID", "__Secure-3PSID"];
+/// If any of these differ between two copies of a session, it is a different login, not just newer tokens.
+const LOGIN_COOKIES: [&str; 7] = ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID", "SID", "__Secure-1PSID", "__Secure-3PSID", "LOGIN_INFO"];
+
+/// The value of one cookie in a `Cookie` header.
+fn cookie_in<'a>(header: &'a str, name: &str) -> Option<&'a str> {
+    header.split(';').find_map(|part| part.trim().split_once('=').filter(|(k, _)| k.trim() == name).map(|(_, v)| v.trim()))
+}
 
 fn cookie_name_ok(name: &str) -> bool {
     !name.is_empty() && name.len() <= 128 && name.bytes().all(|b| b.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?={}".contains(&b))
@@ -272,6 +348,49 @@ fn domain_ok(domain: &str, host: &str) -> bool {
     covers && ours
 }
 
+/// Which cookies a merge added, changed or dropped, by name.
+fn describe_change(old: &str, new: &str) -> String {
+    let value_of = |header: &str, name: &str| -> Option<String> {
+        header.split(';').find_map(|part| part.trim().split_once('=').filter(|(k, _)| k.trim() == name).map(|(_, v)| v.trim().to_owned()))
+    };
+    let (before, after) = (cookie_names(old), cookie_names(new));
+    let added: Vec<&str> = after.iter().copied().filter(|n| !before.contains(n)).collect();
+    let changed: Vec<&str> = after.iter().copied().filter(|n| before.contains(n) && value_of(old, n) != value_of(new, n)).collect();
+    let dropped: Vec<&str> = before.iter().copied().filter(|n| !after.contains(n)).collect();
+    format!("changed [{}], added [{}], dropped [{}]", changed.join(", "), added.join(", "), dropped.join(", "))
+}
+
+/// One `Set-Cookie` line, read: the cookie's name, its value, and whether it deletes the cookie.
+/// `None` for a malformed line, or a cookie scoped somewhere a response from `host` may not set.
+fn read_set_cookie<'a>(line: &'a str, host: &str) -> Option<(&'a str, &'a str, bool)> {
+    let mut parts = line.split(';');
+    let (name, value) = parts.next().and_then(|first| first.split_once('='))?;
+    let (name, value) = (name.trim(), value.trim().trim_matches('"'));
+    if !cookie_name_ok(name) || !cookie_value_ok(value) {
+        return None;
+    }
+    let mut expired = value.is_empty();
+    for attribute in parts {
+        let (key, val) = attribute.trim().split_once('=').unwrap_or((attribute.trim(), ""));
+        match key.to_ascii_lowercase().as_str() {
+            "domain" if !domain_ok(val, host) => return None,
+            "max-age" if val.trim().parse::<i64>().is_ok_and(|n| n <= 0) => expired = true,
+            "expires" if val.contains("1970") || val.contains("1601") => expired = true,
+            _ => {}
+        }
+    }
+    Some((name, value, expired))
+}
+
+/// Whether a response deletes one of the session's own cookies (`SESSION_COOKIES`).
+pub fn deletes_session(set_cookies: &[String], host: &str) -> bool {
+    set_cookies
+        .iter()
+        .take(64)
+        .filter_map(|line| read_set_cookie(line, host))
+        .any(|(name, _, expired)| expired && SESSION_COOKIES.contains(&name))
+}
+
 /// [existing] (a `Cookie` header) with the `Set-Cookie` lines of one response applied; `None` when nothing changes.
 pub fn merge_set_cookies(existing: &str, set_cookies: &[String], host: &str) -> Option<String> {
     let mut pairs: Vec<(String, String)> = existing
@@ -282,26 +401,7 @@ pub fn merge_set_cookies(existing: &str, set_cookies: &[String], host: &str) -> 
     let before = pairs.clone();
 
     for line in set_cookies.iter().take(64) {
-        let mut parts = line.split(';');
-        let Some((name, value)) = parts.next().and_then(|first| first.split_once('=')) else { continue };
-        let (name, value) = (name.trim(), value.trim().trim_matches('"'));
-        if !cookie_name_ok(name) || !cookie_value_ok(value) {
-            continue;
-        }
-        let mut expired = value.is_empty();
-        let mut allowed = true;
-        for attribute in parts {
-            let (key, val) = attribute.trim().split_once('=').unwrap_or((attribute.trim(), ""));
-            match key.to_ascii_lowercase().as_str() {
-                "domain" if !domain_ok(val, host) => allowed = false,
-                "max-age" if val.trim().parse::<i64>().is_ok_and(|n| n <= 0) => expired = true,
-                "expires" if val.contains("1970") || val.contains("1601") => expired = true,
-                _ => {}
-            }
-        }
-        if !allowed {
-            continue;
-        }
+        let Some((name, value, expired)) = read_set_cookie(line, host) else { continue };
         if expired {
             if !KEEP_COOKIES.contains(&name) {
                 pairs.retain(|(k, _)| k != name);
@@ -353,6 +453,61 @@ mod tests {
         assert!(merge_set_cookies(existing, &["X=1; Domain=www.youtube.com".to_owned()], host).is_none());
         // Malformed lines are skipped.
         assert!(merge_set_cookies(existing, &["bad cookie".to_owned(), "a b=1".to_owned()], host).is_none());
+    }
+
+    #[test]
+    fn spots_a_session_being_ended() {
+        let host = "music.youtube.com";
+        let ended = vec!["SID=; Max-Age=0; Domain=.youtube.com".to_owned(), "SIDCC=new".to_owned()];
+        assert!(deletes_session(&ended, host));
+        assert!(deletes_session(&["__Secure-1PSID=x; Expires=Thu, 01 Jan 1970 00:00:00 GMT".to_owned()], host));
+        // Rotation and ordinary updates are not.
+        assert!(!deletes_session(&["__Secure-1PSIDTS=new; Domain=.youtube.com".to_owned(), "SIDCC=n".to_owned()], host));
+        // Deleting something else (YSC, a tracking cookie) is not.
+        assert!(!deletes_session(&["YSC=; Max-Age=0".to_owned()], host));
+        // A cookie for a domain this response may not set is ignored, however it is worded.
+        assert!(!deletes_session(&["SID=; Max-Age=0; Domain=evil.example".to_owned()], host));
+        assert!(!deletes_session(&[], host));
+    }
+
+    #[test]
+    fn tells_a_new_login_from_newer_tokens() {
+        let a = "SAPISID=s; SID=a; __Secure-1PSIDTS=old";
+        assert_eq!(cookie_in(a, "SID"), Some("a"));
+        assert_eq!(cookie_in(a, "NOPE"), None);
+        let tokens_only = "SAPISID=s; SID=a; __Secure-1PSIDTS=new";
+        assert!(LOGIN_COOKIES.iter().all(|n| cookie_in(a, n) == cookie_in(tokens_only, n)));
+        let other_login = "SAPISID=s; SID=b; __Secure-1PSIDTS=new";
+        assert!(LOGIN_COOKIES.iter().any(|n| cookie_in(a, n) != cookie_in(other_login, n)));
+    }
+
+    #[test]
+    fn adopts_fresher_cookies_only_for_the_same_session() {
+        let dir = std::env::temp_dir().join(format!("prismix-vault-adopt-{}", now_ms()));
+        fs::create_dir_all(&dir).unwrap();
+        let vault = Vault { path: dir.join(VAULT_FILE), key: new_key(), data: Mutex::new(Stored::default()) };
+        vault.set(Service::Youtube, Some("SAPISID=s; SID=a; __Secure-1PSIDTS=old".into())).unwrap();
+        let generation = vault.generation(Service::Youtube);
+
+        // Newer rotation tokens for the same login are saved quietly: the generation stays, the page isn't told.
+        assert!(vault.adopt_fresh_cookies(Service::Youtube, generation, "SAPISID=s; SID=a; __Secure-1PSIDTS=new".into()).is_none());
+        assert_eq!(vault.cookie_header(Service::Youtube).as_deref(), Some("SAPISID=s; SID=a; __Secure-1PSIDTS=new"));
+        assert_eq!(vault.generation(Service::Youtube), generation);
+
+        // The login's own cookies changed (a session that had been ended is back): the generation moves.
+        assert!(vault.adopt_fresh_cookies(Service::Youtube, generation, "SAPISID=s; SID=b; __Secure-1PSIDTS=new".into()).is_some());
+        assert!(vault.generation(Service::Youtube) > generation);
+
+        // A copy read for an earlier session is ignored.
+        assert!(vault.adopt_fresh_cookies(Service::Youtube, generation, "SAPISID=s; SID=c".into()).is_none());
+        assert_eq!(cookie_in(&vault.cookie_header(Service::Youtube).unwrap(), "SID"), Some("b"));
+
+        // Signed out meanwhile: nothing is brought back.
+        vault.set(Service::Youtube, None).unwrap();
+        let after_sign_out = vault.generation(Service::Youtube);
+        assert!(vault.adopt_fresh_cookies(Service::Youtube, after_sign_out, "SAPISID=x; SID=x".into()).is_none());
+        assert!(vault.cookie_header(Service::Youtube).is_none());
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

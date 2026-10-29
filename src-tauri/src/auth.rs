@@ -20,8 +20,8 @@ const YT_SIGN_IN: &str = "https://accounts.google.com/ServiceLogin?ltmpl=music&s
 const YT_ADD_ACCOUNT: &str = "https://accounts.google.com/AddSession?ltmpl=music&service=youtube&passive=true&continue=https%3A%2F%2Fmusic.youtube.com%2F";
 const SPOTIFY_SIGN_IN: &str = "https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F";
 
-const YT_SIGNING: [&str; 3] = ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID"];
-const MAX_COOKIE_HEADER: usize = 16 * 1024;
+pub(crate) const YT_SIGNING: [&str; 3] = ["SAPISID", "__Secure-3PAPISID", "__Secure-1PAPISID"];
+pub(crate) const MAX_COOKIE_HEADER: usize = 16 * 1024;
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 
 fn label(service: Service) -> &'static str {
@@ -32,7 +32,7 @@ fn label(service: Service) -> &'static str {
 }
 
 /// Hosts the sign-in window may show; anything else opens in the system browser.
-fn allowed_in_sign_in(service: Service, url: &Url) -> bool {
+pub(crate) fn allowed_in_sign_in(service: Service, url: &Url) -> bool {
     if url.scheme() == "about" {
         return true;
     }
@@ -65,7 +65,7 @@ pub fn auth_status(vault: State<'_, Vault>) -> Sessions {
 }
 
 /// Cookie header for the sign-in window's view of `url`, only `name=value` pairs.
-async fn cookies_for(window: &WebviewWindow, url: &str) -> Option<Vec<(String, String)>> {
+pub(crate) async fn cookies_for(window: &WebviewWindow, url: &str) -> Option<Vec<(String, String)>> {
     let url = Url::parse(url).ok()?;
     let window = window.clone();
     // Reading cookies must not run on the main thread (it deadlocks on Windows).
@@ -76,11 +76,11 @@ async fn cookies_for(window: &WebviewWindow, url: &str) -> Option<Vec<(String, S
         .map(|list| list.into_iter().map(|c| (c.name().to_owned(), c.value().to_owned())).collect())
 }
 
-fn header_of(pairs: &[(String, String)]) -> String {
+pub(crate) fn header_of(pairs: &[(String, String)]) -> String {
     pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("; ")
 }
 
-fn current_host(window: &WebviewWindow) -> Option<String> {
+pub(crate) fn current_host(window: &WebviewWindow) -> Option<String> {
     window.url().ok().and_then(|u| u.host_str().map(str::to_owned))
 }
 
@@ -123,6 +123,13 @@ async fn watch(app: AppHandle, window: WebviewWindow, service: Service) {
         }
         return;
     }
+}
+
+/// Where the sign-in windows keep their browsing data (Windows and Linux; macOS shares the system's store).
+/// The session keeper (keeper.rs) opens its hidden window on the same profile, so it sees the same login.
+#[cfg(any(target_os = "windows", target_os = "linux"))]
+pub(crate) fn sign_in_profile(app: &AppHandle) -> AppResult<std::path::PathBuf> {
+    Ok(app.path().app_local_data_dir().map_err(|e| AppError::internal(e.to_string()))?.join("sign-in-profile"))
 }
 
 #[tauri::command]
@@ -171,8 +178,7 @@ pub async fn auth_sign_in(app: AppHandle, vault: State<'_, Vault>, service: Stri
     // Its own profile on Windows and Linux, apart from the player's webview.
     #[cfg(any(target_os = "windows", target_os = "linux"))]
     {
-        let dir = app.path().app_local_data_dir().map_err(|e| AppError::internal(e.to_string()))?.join("sign-in-profile");
-        builder = builder.data_directory(dir);
+        builder = builder.data_directory(sign_in_profile(&app)?);
     }
 
     let window = builder.build()?;

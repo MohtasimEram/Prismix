@@ -7,6 +7,7 @@
 //! | `rules`     | Origin/Referer rules and request signing                            |                   |
 //! | `vault`     | the YouTube/Spotify cookies, encrypted at rest                       |                   |
 //! | `auth`      | sign-in window and cookie import                                    | session.ts        |
+//! | `keeper`    | keeps the YouTube session accepted (hidden visits to YouTube Music)  |                   |
 //! | `ws`        | WebSockets for Listen Together                                      | nativeSocket.ts   |
 //! | `discord`   | Rich Presence over the Discord app's local RPC socket                | discord.ts        |
 //! | `prefs`     | close-to-tray and media-key preferences                             | window.ts         |
@@ -14,9 +15,11 @@
 //! | `shortcuts` | global media keys                                                   | media.ts          |
 
 mod auth;
+mod diag;
 mod discord;
 mod download;
 mod error;
+mod keeper;
 mod net;
 mod netguard;
 mod prefs;
@@ -34,7 +37,7 @@ use tauri_plugin_window_state::StateFlags;
 use crate::prefs::Prefs;
 
 /// Windows that never get their size/position remembered (the sign-in windows open centred).
-const TRANSIENT_WINDOWS: [&str; 2] = ["auth-youtube", "auth-spotify"];
+const TRANSIENT_WINDOWS: [&str; 3] = ["auth-youtube", "auth-spotify", "auth-youtube-keeper"];
 
 pub fn run() {
     // reqwest and tokio-tungstenite share rustls; make ring its process-wide crypto provider.
@@ -46,6 +49,8 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(if cfg!(debug_assertions) { log::LevelFilter::Debug } else { log::LevelFilter::Info })
+                // Room for days of session diagnostics before the file rolls over.
+                .max_file_size(1_000_000)
                 // Third-party crates are chatty at debug level.
                 .level_for("reqwest", log::LevelFilter::Warn)
                 .level_for("hyper_util", log::LevelFilter::Warn)
@@ -92,6 +97,8 @@ pub fn run() {
                 let _ = main.show();
                 let _ = main.set_focus();
             }
+            // Renews the saved YouTube session now and then (keeper.rs), as a browser would.
+            keeper::start(handle.clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -117,6 +124,7 @@ pub fn run() {
             auth::auth_sign_in,
             auth::auth_sign_out,
             auth::auth_import_cookies,
+            diag::diag_log,
             net::net_fetch,
             net::net_abort,
             ws::ws_open,
