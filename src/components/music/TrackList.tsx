@@ -1,5 +1,5 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, Check, Plus } from 'lucide-react';
+import { ArrowDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
@@ -131,7 +131,7 @@ function AddBadge({ track, variant, hovered, savedHere }: { track: Track; varian
   return (
     <button
       type="button"
-      className={`absolute top-1/2 hidden size-5 -translate-y-1/2 place-items-center rounded-full bg-key text-white group-focus-within/row:grid group-hover/row:grid hover:opacity-90 focus-visible:grid ${
+      className={`absolute top-1/2 hidden size-5 -translate-y-1/2 rounded-full p-0 group-focus-within/row:block group-hover/row:block hover:opacity-90 focus-visible:block ${
         // Just left of the ⋯ button, and right of the downloaded badge.
         variant === 'playlist' ? 'end-[62px]' : 'end-[58px]'
       }`}
@@ -149,11 +149,20 @@ function AddBadge({ track, variant, hovered, savedHere }: { track: Track; varian
       }}
       onDoubleClick={(event) => event.stopPropagation()}
     >
-      {saved ? (
-        <Check size={13} strokeWidth={3.4} className="-translate-x-px" aria-hidden="true" />
-      ) : (
-        <Plus size={14} strokeWidth={3.2} aria-hidden="true" />
-      )}
+      {/*
+        The circle and its tick or plus are one drawing, so they are placed together. As separate
+        boxes (a round background and an icon inside it) the browser rounds each to the pixel grid
+        on its own, and once the row sits at a fractional position (after the window or a panel was
+        resized, or a list scrolled) the tick could land a pixel off-centre.
+      */}
+      <svg width="20" height="20" viewBox="0 0 20 20" className="block" aria-hidden="true" focusable="false">
+        <circle cx="10" cy="10" r="10" className="fill-key" />
+        {saved ? (
+          <path d="M20 6 9 17l-5-5" transform="translate(9 10) scale(0.5417) translate(-12 -11.5)" fill="none" stroke="#fff" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+        ) : (
+          <path d="M5 12h14M12 5v14" transform="translate(10 10) scale(0.5833) translate(-12 -12)" fill="none" stroke="#fff" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />
+        )}
+      </svg>
     </button>
   );
 }

@@ -216,12 +216,9 @@ type LibraryPageParam = (() => Promise<Paged<BrowsePage>>) | null;
 export const libraryQuery = (section: LibrarySection) =>
   infiniteQueryOptions({
     queryKey: ['music', 'library', section],
-    queryFn: async ({ pageParam }: { pageParam: LibraryPageParam }) => {
-      const page = await (pageParam ? pageParam() : fetchLibrary(section));
-      // The Songs page is the liked songs: each is a favourite.
-      if (section === 'songs') noteLikedTracks(page.data.tracks.map((t) => t.videoId));
-      return page;
-    },
+    // Not marked as favourites: the library's Songs page lists every song in the library (saved
+    // from albums, uploads), not only the liked ones. Only Liked Music's own page says "liked".
+    queryFn: ({ pageParam }: { pageParam: LibraryPageParam }) => (pageParam ? pageParam() : fetchLibrary(section)),
     initialPageParam: null as LibraryPageParam,
     getNextPageParam: (last) => last.next ?? undefined,
     staleTime: 2 * 60_000,
