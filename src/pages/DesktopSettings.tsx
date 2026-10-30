@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { RotateCcw, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { importCookies, type Service } from '@/desktop/session';
 import { isDesktop } from '@/desktop/tauri';
 import { appVersion, useUpdater } from '@/desktop/updater';
 import { desktopPrefs, setDesktopPrefs, type DesktopPrefs } from '@/desktop/window';
-import { EQ_BANDS, EQ_PRESETS, PITCH_LIMITS, TEMPO_LIMITS, useAudioFx, useTempoPitch } from '@/playback/audioFx';
+import { EQ_BANDS, EQ_PRESETS, useAudioFx } from '@/playback/audioFx';
 import { DOWNLOAD_FORMATS, DOWNLOAD_QUALITIES, STREAM_QUALITIES, useQuality } from '@/playback/quality';
 import { useScrobbling, validateToken } from '@/playback/scrobbling';
 import { useSleepTimer } from '@/playback/sleepTimer';
@@ -83,180 +83,6 @@ export function EqualizerSettings() {
         </>
       )}
     </>
-  );
-}
-
-// ---- Tempo and pitch -------------------------------------------------------------
-
-const formatTempo = (tempo: number) => `${tempo.toFixed(2).replace(/0$/, '').replace(/\.$/, '')}×`;
-const formatPitch = (pitch: number) => `${pitch > 0 ? '+' : ''}${pitch} st`;
-
-const TEMPO_PRESETS = [
-  { value: 0.75, label: '0.75×' },
-  { value: 1.0, label: '1.0×' },
-  { value: 1.25, label: '1.25×' },
-  { value: 1.5, label: '1.5×' },
-];
-
-const PITCH_PRESETS = [
-  { value: -2, label: '-2 st' },
-  { value: -1, label: '-1 st' },
-  { value: 0, label: '0 st' },
-  { value: 1, label: '+1 st' },
-  { value: 2, label: '+2 st' },
-];
-
-function SettingSlider({
-  label,
-  description,
-  min,
-  max,
-  step,
-  value,
-  origin,
-  displayValue,
-  presets,
-  onChange,
-  onReset,
-}: {
-  label: string;
-  description: string;
-  min: number;
-  max: number;
-  step: number;
-  value: number;
-  origin: number;
-  displayValue: string;
-  presets?: { value: number; label: string }[];
-  onChange: (value: number) => void;
-  onReset: () => void;
-}) {
-  const at = (v: number) => ((v - min) / (max - min)) * 100;
-  const from = Math.min(at(value), at(origin));
-  const to = Math.max(at(value), at(origin));
-  const track = `linear-gradient(to right, transparent ${from}%, var(--systemPrimary) ${from}%, var(--systemPrimary) ${to}%, transparent ${to}%), var(--systemQuaternary)`;
-  const isModified = Math.abs(value - origin) > 0.001;
-
-  return (
-    <div className="flex flex-col gap-2.5 px-4 py-3 hairline-[16px]">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-0.5">
-          <span className="type-title-3 font-medium text-primary">{label}</span>
-          <span className="type-callout text-secondary">{description}</span>
-        </div>
-        <button
-          type="button"
-          onClick={onReset}
-          title="Click to reset to default"
-          className={`flex-none rounded-[8px] px-2.5 py-1 type-callout-emphasized tabular-nums transition-colors ${
-            isModified
-              ? 'bg-key/15 text-key hover:bg-key/25'
-              : 'bg-quaternary text-secondary hover:bg-tertiary hover:text-primary'
-          }`}
-        >
-          {displayValue}
-        </button>
-      </div>
-
-      <div className="relative flex h-6 items-center py-1">
-        {/* Origin tick mark */}
-        <span
-          className="pointer-events-none absolute top-1/2 h-3 w-[1.5px] -translate-y-1/2 rounded-full bg-tertiary"
-          style={{ left: `${at(origin)}%` }}
-          aria-hidden="true"
-        />
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={value}
-          onChange={(e) => onChange(Number(e.currentTarget.value))}
-          onDoubleClick={onReset}
-          aria-label={label}
-          style={{ background: track }}
-          className="relative h-[6px] w-full cursor-pointer appearance-none rounded-full outline-none transition-[background] [&::-webkit-slider-thumb]:size-[18px] [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-[0_1px_4px_rgb(0_0_0/0.45),0_0_0_0.5px_rgb(0_0_0/0.15)] [&::-webkit-slider-thumb]:transition-transform hover:[&::-webkit-slider-thumb]:scale-110 active:[&::-webkit-slider-thumb]:scale-95 focus-visible:[&::-webkit-slider-thumb]:ring-2 focus-visible:[&::-webkit-slider-thumb]:ring-key"
-        />
-      </div>
-
-      {presets && (
-        <div className="flex gap-1.5 pt-0.5">
-          {presets.map((preset) => {
-            const active = Math.abs(value - preset.value) < 0.001;
-            return (
-              <button
-                key={preset.value}
-                type="button"
-                onClick={() => onChange(preset.value)}
-                className={`flex-1 rounded-[6px] py-1 type-caption-1-emphasized tabular-nums transition-colors ${
-                  active
-                    ? 'bg-primary text-page font-semibold shadow-xs'
-                    : 'bg-quaternary text-secondary hover:bg-tertiary hover:text-primary'
-                }`}
-              >
-                {preset.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
- * Settings › Sound: playback speed and key (playback/audioFx.ts). Speed keeps
- * the key (the browser's time-stretch) and pitch keeps the speed (a SoundTouch
- * worklet that is bypassed at 0), so changing one never bends the other.
- */
-export function TempoPitchSettings() {
-  const { tempo, pitch, setTempo, setPitch, reset } = useTempoPitch();
-  const changed = tempo !== 1 || pitch !== 0;
-
-  return (
-    <div className="flex flex-col">
-      <SettingSlider
-        label="Tempo"
-        description="Faster or slower; the key stays the same."
-        min={TEMPO_LIMITS.min}
-        max={TEMPO_LIMITS.max}
-        step={TEMPO_LIMITS.step}
-        value={tempo}
-        origin={1}
-        displayValue={formatTempo(tempo)}
-        presets={TEMPO_PRESETS}
-        onChange={setTempo}
-        onReset={() => setTempo(1)}
-      />
-
-      <SettingSlider
-        label="Pitch"
-        description="Higher or lower in semitones; the speed stays the same."
-        min={PITCH_LIMITS.min}
-        max={PITCH_LIMITS.max}
-        step={PITCH_LIMITS.step}
-        value={pitch}
-        origin={0}
-        displayValue={formatPitch(pitch)}
-        presets={PITCH_PRESETS}
-        onChange={setPitch}
-        onReset={() => setPitch(0)}
-      />
-
-      {changed && (
-        <div className="flex items-center justify-between px-4 py-3">
-          <span className="type-callout text-secondary">Tempo or pitch has been adjusted from normal.</span>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-[10px] bg-quaternary px-3 py-1.5 type-callout-emphasized text-primary transition-colors hover:bg-tertiary active:scale-[0.98]"
-            onClick={reset}
-          >
-            <RotateCcw size={14} className="text-secondary" />
-            Reset Both
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 

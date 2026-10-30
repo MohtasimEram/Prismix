@@ -1,10 +1,11 @@
 import { Plus, RefreshCw } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { PrefetchLink } from '@/components/PrefetchLink';
-import { PlayIcon } from '@/components/icons/Transport';
+import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
 import { useAddToPlaylist, usePlaylistRecommendations, useSignedIn } from '@/data/music/queries';
 import type { Track } from '@/data/music/types';
 import { useAddDialog } from '@/state/addDialog';
+import { usePlayer } from '@/state/player';
 import { Artwork } from './Artwork';
 import { ExplicitBadge } from './ExplicitBadge';
 import { albumHref, artistHref } from './links';
@@ -23,19 +24,32 @@ interface Props {
 }
 
 function RecommendedRow({ track, editable, adding, onAdd }: { track: Track; editable: boolean; adding: boolean; onAdd: () => void }) {
+  const current = usePlayer((s) => s.nowPlaying?.videoId === track.videoId);
+  const status = usePlayer((s) => s.status);
+  const playing = current && (status === 'playing' || status === 'loading' || status === 'buffering');
+  const toggleOrPlay = () => {
+    if (current) usePlayer.getState().togglePlay();
+    else playTrack(track);
+  };
   const album = track.album;
   const albumLink = album ? albumHref(album.id) : null;
   return (
-    <div className="group/rec grid h-[54px] grid-cols-[minmax(0,36.5fr)_minmax(0,25.25fr)_minmax(0,25.25fr)_minmax(0,13fr)] items-center rounded-[12px] hover:bg-tracklist-hover max-md:grid-cols-[minmax(0,1fr)_auto]">
+    <div
+      className="group/rec grid h-[54px] grid-cols-[minmax(0,36.5fr)_minmax(0,25.25fr)_minmax(0,25.25fr)_minmax(0,13fr)] items-center rounded-[12px] hover:bg-tracklist-hover max-md:grid-cols-[minmax(0,1fr)_auto]"
+      onDoubleClick={toggleOrPlay}
+    >
       <div className="flex h-full min-w-0 items-center gap-3">
         <div className="relative ms-[7px] grid w-10 shrink-0 place-items-center">
           <Artwork src={track.thumbnail} displayWidth={40} radius="var(--radius-artwork-small)" />
           <button
-            className="absolute inset-0 grid place-items-center rounded-artwork-sm bg-lockup-hover text-white opacity-0 group-hover/rec:opacity-100 focus-visible:opacity-100"
-            aria-label={`Play ${track.title}`}
-            onClick={() => playTrack(track)}
+            className={`absolute inset-0 grid place-items-center rounded-artwork-sm bg-lockup-hover text-white transition-opacity duration-100 group-hover/rec:opacity-100 focus-visible:opacity-100 ${
+              playing ? 'opacity-100' : 'opacity-0'
+            }`}
+            aria-label={playing ? `Pause ${track.title}` : `Play ${track.title}`}
+            title={playing ? 'Pause' : 'Play'}
+            onClick={toggleOrPlay}
           >
-            <PlayIcon size={18} />
+            {playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
           </button>
         </div>
         <div className="flex min-w-0 items-center">

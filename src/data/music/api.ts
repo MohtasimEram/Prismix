@@ -318,14 +318,33 @@ export async function fetchAllLibraryPlaylists(): Promise<MusicItem[]> {
 
 export type LikeStatus = 'LIKE' | 'DISLIKE' | 'INDIFFERENT';
 
+function extractLikeButtonVideoId(b: Raw): string | undefined {
+  if (typeof (b.target as { videoId?: unknown })?.videoId === 'string') {
+    return (b.target as { videoId: string }).videoId;
+  }
+  const fromDefault = (b.defaultServiceEndpoint as Raw | undefined)?.likeEndpoint as Raw | undefined;
+  if (typeof (fromDefault?.target as { videoId?: unknown })?.videoId === 'string') {
+    return (fromDefault!.target as { videoId: string }).videoId;
+  }
+  const fromToggled = (b.toggledServiceEndpoint as Raw | undefined)?.likeEndpoint as Raw | undefined;
+  if (typeof (fromToggled?.target as { videoId?: unknown })?.videoId === 'string') {
+    return (fromToggled!.target as { videoId: string }).videoId;
+  }
+  const fromDirect = (b.likeEndpoint as Raw | undefined)?.target as { videoId?: unknown } | undefined;
+  if (typeof fromDirect?.videoId === 'string') {
+    return fromDirect.videoId;
+  }
+  return undefined;
+}
+
 /** The thumbs state YouTube Music shows on its player for this track. */
 export async function fetchLikeStatus(videoId: string): Promise<LikeStatus> {
   const yt = await getSignedInnertube();
   const response = await yt.actions.execute('/next', { videoId, client: 'YTMUSIC' });
   const data = response.data as Raw;
-  // The player's own like button first; the answer's other like buttons only if it has none.
+  // The player's own like button matching this specific track videoId.
   const buttons = [...collect(data.playerOverlays, 'likeButtonRenderer'), ...collect(data, 'likeButtonRenderer')];
-  const own = buttons.find((b) => (b.target as { videoId?: string } | undefined)?.videoId === videoId) ?? buttons[0];
+  const own = buttons.find((b) => extractLikeButtonVideoId(b) === videoId);
   const status = own?.likeStatus;
   if (status === 'LIKE' || status === 'DISLIKE') return status;
   // YouTube's answer misses some songs that are plainly in Liked Music (added long ago, or as

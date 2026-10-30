@@ -12,7 +12,7 @@ import { useYtAuth } from '@/extension/useYtAuth';
 import { useParty } from '@/party/useParty';
 import { useHistorySettings } from '@/playback/historyReporting';
 import { CROSSFADE_CHOICES, usePlayer } from '@/state/player';
-import { CookieSignInDialog, DesktopAppSettings, EqualizerSettings, QualitySettings, ScrobblingSettings, SleepTimerSetting, TempoPitchSettings, UpdateSettings } from './DesktopSettings';
+import { CookieSignInDialog, DesktopAppSettings, EqualizerSettings, QualitySettings, ScrobblingSettings, SleepTimerSetting, UpdateSettings } from './DesktopSettings';
 import { AppleMusicToggles, CanvasToggle, SpotifyIntegration, Toggle } from './IntegrationSettings';
 import { settingsUi } from './settingsStyles';
 
@@ -173,9 +173,6 @@ export default function SettingsPage() {
         <p className={settingsUi.footer}>
           YouTube Music streams are Opus and AAC, never FLAC or Dolby Atmos, so Maximum plays the highest bitrate on offer (256 kbps AAC with Premium).
         </p>
-        <section className={`${settingsUi.group} mt-3`}>
-          <TempoPitchSettings />
-        </section>
         <section className={`${settingsUi.group} mt-3`}>
           <EqualizerSettings />
         </section>
