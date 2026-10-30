@@ -1,14 +1,29 @@
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
-import type { MusicItem } from '@/data/music/types';
+import type { MusicItem, Track } from '@/data/music/types';
 import { usePlayer } from '@/state/player';
 import { trackDragProps } from '@/state/dragTrack';
 import { Artwork } from './Artwork';
 import { ExplicitBadge } from './ExplicitBadge';
 import { artistHref, hrefFor } from './links';
 import { playTrack } from './play';
+import { TrackMenu } from './TrackMenu';
 
-const isPlayable = (item: MusicItem) => item.kind === 'song' || item.kind === 'video';
+export const isPlayable = (item: MusicItem) => item.kind === 'song' || item.kind === 'video';
+
+export function itemToTrack(item: MusicItem): Track {
+  return {
+    videoId: item.id,
+    title: item.title,
+    artists: item.artists,
+    album: item.album ?? null,
+    durationSec: item.durationSec ?? null,
+    explicit: !!item.explicit,
+    thumbnail: item.thumbnail,
+    index: null,
+    plays: null,
+  };
+}
 
 /** Dragging a song or video card onto a playlist in the sidebar adds it (state/dragTrack.ts). */
 const dragOf = (item: MusicItem) => trackDragProps(isPlayable(item) ? { videoId: item.id, title: item.title } : null);
@@ -78,6 +93,18 @@ function PlayPlatter({ item }: { item: MusicItem }) {
   );
 }
 
+function MenuPlatter({ item }: { item: MusicItem }) {
+  const track = itemToTrack(item);
+  return (
+    <div className="absolute bottom-2.5 right-2.5 z-3">
+      <TrackMenu
+        track={track}
+        className="grid size-[30px] place-items-center rounded-full bg-thin-material text-white transition-[opacity,background-color] duration-100 [backdrop-filter:saturate(180%)_blur(60px)] hover:bg-white/35 focus-visible:opacity-100 group-focus-within/art:opacity-100 group-hover/art:opacity-100 data-open:opacity-100 opacity-0"
+      />
+    </div>
+  );
+}
+
 /** The artwork with its hover scrim, linking to the item or playing it. */
 function LockupArtwork({ item, width, aspect }: { item: MusicItem; width: number; aspect: number }) {
   const href = hrefFor(item);
@@ -92,7 +119,12 @@ function LockupArtwork({ item, width, aspect }: { item: MusicItem; width: number
       )}
       {/* Hover scrim and platter (report §2: --lockupHoverBGColor, opacity .1s ease-in). */}
       <div className="pointer-events-none absolute inset-0 z-2 rounded-[inherit] bg-lockup-hover opacity-0 transition-opacity duration-100 ease-in group-focus-within/art:opacity-100 group-hover/art:opacity-100" />
-      {isPlayable(item) && <PlayPlatter item={item} />}
+      {isPlayable(item) && (
+        <>
+          <PlayPlatter item={item} />
+          <MenuPlatter item={item} />
+        </>
+      )}
     </div>
   );
 }
@@ -148,17 +180,19 @@ export function CircleLockup({ item, width = 160 }: { item: MusicItem; width?: n
   );
 }
 
-/** A song row inside a shelf (report §2, track lockup): 40px art, title, byline. */
+/** A song row inside a shelf (report §2, track lockup): 40px art, title, byline, 3-dot menu. */
 export function TrackLockup({ item, onPlay }: { item: MusicItem; onPlay?: () => void }) {
   const { current, playing } = usePlayback(item);
   const play = () => toggleOrPlay(current, item, onPlay);
+  const track = itemToTrack(item);
+
   return (
-    // 52px art column (40 + 12 gap), content; 55px tall.
-    <div className="group/track grid h-[55px] grid-cols-[40px_minmax(0,1fr)] items-center gap-x-3 py-[7.5px] pr-3.5 pl-0" {...dragOf(item)}>
+    // 52px art column (40 + 12 gap), content, 32px menu; 55px tall.
+    <div className="group/track relative grid h-[55px] grid-cols-[40px_minmax(0,1fr)_32px] items-center gap-x-3 py-[7.5px] pr-2 pl-0" {...dragOf(item)}>
       <button className="group/art relative w-10 rounded-artwork-sm" aria-label={`Play ${item.title}`} onClick={play}>
         <Artwork src={item.thumbnail} displayWidth={40} radius="var(--radius-artwork-small)" />
         <span
-          className={`absolute inset-0 grid place-items-center rounded-[inherit] bg-lockup-hover text-white transition-opacity duration-100 ease-in group-hover/track:opacity-100 group-focus-visible/art:opacity-100 opacity-0`}
+          className="absolute inset-0 grid place-items-center rounded-[inherit] bg-lockup-hover text-white transition-opacity duration-100 ease-in group-hover/track:opacity-100 group-focus-visible/art:opacity-100 opacity-0"
           aria-hidden="true"
         >
           {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
@@ -174,6 +208,12 @@ export function TrackLockup({ item, onPlay }: { item: MusicItem; onPlay?: () => 
         <div className="truncate type-callout text-secondary">
           <Byline item={item} />
         </div>
+      </div>
+      <div className="relative grid items-center justify-items-end">
+        <TrackMenu
+          track={track}
+          className="hidden size-7 place-items-center rounded-full text-secondary hover:text-primary hover:bg-quaternary data-open:text-primary data-open:bg-quaternary group-hover/track:grid group-focus-within/track:grid data-open:grid"
+        />
       </div>
     </div>
   );

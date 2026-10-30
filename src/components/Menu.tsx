@@ -2,7 +2,7 @@ import { Check } from 'lucide-react';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
-export type MenuPlacement = 'above-start' | 'above-end' | 'below-end';
+export type MenuPlacement = 'above-start' | 'above-end' | 'below-start' | 'below-end';
 
 interface MenuProps {
   /** The element the menu opens from. */
@@ -25,18 +25,37 @@ export function Menu({ anchor, placement = 'below-end', onClose, label, children
   useLayoutEffect(() => {
     const rect = anchor.getBoundingClientRect();
     const gap = 6;
-    setPosition(
-      placement === 'above-start'
-        ? { left: Math.max(8, rect.left), bottom: window.innerHeight - rect.top + gap, maxHeight: rect.top - 2 * gap }
-        : placement === 'above-end'
-        ? { right: Math.max(8, window.innerWidth - rect.right), bottom: window.innerHeight - rect.top + gap, maxHeight: rect.top - 2 * gap }
-        : {
-            right: Math.max(8, window.innerWidth - rect.right),
-            top: rect.bottom + gap,
-            maxHeight: window.innerHeight - rect.bottom - 2 * gap,
-          },
-    );
-  }, [anchor, placement]);
+    const margin = 8;
+    const isStart = placement.endsWith('-start');
+    const wantedAbove = placement.startsWith('above');
+
+    const spaceBelow = window.innerHeight - rect.bottom - gap - margin;
+    const spaceAbove = rect.top - gap - margin;
+    const menuHeight = panel.current ? panel.current.scrollHeight : 280;
+
+    let placeAbove = wantedAbove;
+    if (!wantedAbove && spaceBelow < menuHeight && spaceAbove > spaceBelow) {
+      placeAbove = true;
+    } else if (wantedAbove && spaceAbove < menuHeight && spaceBelow > spaceAbove) {
+      placeAbove = false;
+    }
+
+    const maxHeight = Math.max(60, placeAbove ? spaceAbove : spaceBelow);
+    const transformOrigin = placeAbove
+      ? isStart ? 'bottom left' : 'bottom right'
+      : isStart ? 'top left' : 'top right';
+
+    setPosition({
+      ...(isStart
+        ? { left: Math.max(margin, rect.left) }
+        : { right: Math.max(margin, window.innerWidth - rect.right) }),
+      ...(placeAbove
+        ? { bottom: window.innerHeight - rect.top + gap }
+        : { top: rect.bottom + gap }),
+      maxHeight,
+      transformOrigin,
+    });
+  }, [anchor, placement, children]);
 
   useEffect(() => {
     panel.current?.querySelector<HTMLElement>('[role^="menuitem"]')?.focus({ preventScroll: true });

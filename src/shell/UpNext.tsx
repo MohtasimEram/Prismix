@@ -1,12 +1,12 @@
 import { party, useParty } from '@/party/listenTogether';
-import { Infinity as InfinityIcon, ListMinus, ListStart, MoreHorizontal, Play, X } from 'lucide-react';
+import { Infinity as InfinityIcon, MoreHorizontal, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
-import { Menu, MenuHeader, MenuItem, MenuSeparator } from '@/components/Menu';
+import { Menu, MenuHeader, MenuItem } from '@/components/Menu';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
 import { Artwork } from '@/components/music/Artwork';
 import { artistHref, formatDuration } from '@/components/music/links';
-import { ShareItem } from '@/components/music/TrackMenu';
+import { TrackMenu } from '@/components/music/TrackMenu';
 import { autoplaySectionStart, upcomingUserQueueIndices, type QueueEntry } from '@/playback/queue/timeline';
 import { CROSSFADE_CHOICES, usePlayer } from '@/state/player';
 
@@ -33,9 +33,7 @@ function Row({
 }) {
   const { jumpTo, removeAt, playNext, togglePlay } = usePlayer.getState();
   const playing = usePlayer((s) => s.status === 'playing' || s.status === 'buffering');
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [over, setOver] = useState(false);
-  const close = useCallback(() => setAnchor(null), []);
   const { track } = entry;
 
   return (
@@ -99,47 +97,26 @@ function Row({
         </span>
       </div>
       <div className="relative grid items-center justify-items-end">
-        <span className="type-body tabular-nums text-secondary group-hover/row:invisible group-has-[[data-open]]/row:invisible">{formatDuration(track.durationSec)}</span>
-        <button
-          className="absolute inset-y-0 right-0 my-auto hidden size-7 place-items-center rounded-full text-key group-hover/row:grid data-open:grid"
-          aria-label={`More options for ${track.title}`}
-          aria-haspopup="menu"
-          data-open={anchor !== null || undefined}
-          onClick={(e) => setAnchor(anchor ? null : e.currentTarget)}
-        >
-          <MoreHorizontal size={16} />
-        </button>
-      </div>
-      {anchor && (
-        <Menu anchor={anchor} onClose={close} label={track.title}>
-          {!current && (
-            <>
-              <MenuItem icon={<Play size={15} />} onSelect={() => (close(), jumpTo(at))}>
-                Play Now
-              </MenuItem>
-              <MenuItem
-                icon={<ListStart size={15} />}
-                onSelect={() => {
-                  close();
+        <span className="type-body tabular-nums text-secondary group-hover/row:invisible group-has-[[data-open]]/row:invisible">
+          {formatDuration(track.durationSec)}
+        </span>
+        <TrackMenu
+          track={track}
+          placement="below-end"
+          className="absolute inset-y-0 right-0 my-auto hidden size-7 place-items-center rounded-full text-secondary hover:text-primary hover:bg-quaternary data-open:text-primary data-open:bg-quaternary group-hover/row:grid data-open:grid"
+          onPlayNow={!current ? () => jumpTo(at) : undefined}
+          onPlayNext={
+            !current
+              ? () => {
                   removeAt(at);
                   playNext([track], entry.source);
-                }}
-              >
-                Play Next
-              </MenuItem>
-            </>
-          )}
-          <ShareItem videoId={track.videoId} onClose={close} />
-          {!current && (
-            <>
-              <MenuSeparator />
-              <MenuItem icon={<ListMinus size={15} />} destructive onSelect={() => (close(), removeAt(at))}>
-                Remove from Up Next
-              </MenuItem>
-            </>
-          )}
-        </Menu>
-      )}
+                }
+              : undefined
+          }
+          onRemove={!current ? () => removeAt(at) : undefined}
+          removeLabel="Remove from Up Next"
+        />
+      </div>
     </li>
   );
 }
@@ -243,7 +220,7 @@ export function UpNext({ onClose }: { onClose?: (() => void) | undefined } = {})
           </p>
         </div>
       ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-[120px] [scrollbar-width:thin]">
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-[120px]">
           <ol className={list}>{rows(beforeAutoplay)}</ol>
           {afterAutoplay.length > 0 && (
             <>

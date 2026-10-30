@@ -1,4 +1,4 @@
-import { Check, ListMusic, Pin, PinOff, Plus, Settings, TriangleAlert, Users } from 'lucide-react';
+import { Check, ListMusic, Loader2, MoreHorizontal, Pin, Plus, Settings, TriangleAlert, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { PrefetchLink, PrefetchNavLink } from '@/components/PrefetchLink';
@@ -30,6 +30,7 @@ import { spotifyPinKey, usePins, ytmPinKey, type Pin as PinData } from '@/state/
 import { useUi } from '@/state/ui';
 import { Resizer } from './Resizer';
 import { AccountButton } from './AccountButton';
+import { PlaylistRowMenu, runPlaylistAction, type PlaylistAction } from './PlaylistRowMenu';
 
 interface NavItem {
   to: string;
@@ -63,6 +64,9 @@ const LIBRARY: NavItem[] = [...LIBRARY_PAGES, { to: '/downloads', label: 'Downlo
 const item =
   'group flex h-9 items-center gap-2 mb-0.5 p-1 rounded-nav type-body-reduced text-primary hover:bg-quinary aria-[current=page]:bg-nav-selected';
 // Apple's glyphs, drawn at 24px (their 24-unit box), which the user preferred to Apple's own 28px.
+/** A playlist row: a taller row with a larger cover and name than the page links. */
+const playlistItem =
+  'group flex h-11 items-center gap-2.5 mb-0.5 p-1 rounded-nav type-body text-primary hover:bg-quinary aria-[current=page]:bg-nav-selected';
 const icon = 'inline-grid size-6 flex-none place-items-center text-primary group-aria-[current=page]:text-key';
 const navLabel = 'min-w-0 truncate';
 // "Library", "Playlists" (report §1: 12px/15px 600, secondary, padding 4px 8px).
@@ -84,23 +88,36 @@ function NavList({ items, onNavigate }: { items: NavItem[]; onNavigate: () => vo
   );
 }
 
-/** A playlist's cover, 28px, beside its name; the list icon until it has one. */
-function Cover({ src }: { src: string | null }) {
+/**
+ * A playlist's cover, 34px, beside its name; the list icon until it has one. A pinned playlist wears a
+ * small tilted white pin on the cover's corner, on the Create button's colour (a faint tint over the
+ * sidebar's glass). That colour is built up from solid layers, so the cover behind it doesn't show through.
+ */
+function Cover({ src, pinned = false }: { src: string | null; pinned?: boolean }) {
   return (
-    <span className="inline-grid size-7 flex-none place-items-center overflow-hidden rounded-[5px] bg-quinary text-secondary">
-      {src ? <Artwork src={src} displayWidth={28} radius="5px" /> : <ListMusic size={16} strokeWidth={1.8} />}
+    <span className="relative inline-grid size-[34px] flex-none place-items-center">
+      <span className="inline-grid size-[34px] place-items-center overflow-hidden rounded-[6px] bg-quinary text-secondary">
+        {src ? <Artwork src={src} displayWidth={34} radius="6px" /> : <ListMusic size={18} strokeWidth={1.8} />}
+      </span>
+      {pinned && (
+        <span className="pointer-events-none absolute -top-1.5 -right-1.5 size-[18px] rounded-full bg-[var(--pageBG)] shadow-[0_0_0_1px_rgba(0,0,0,0.25)]" aria-hidden="true">
+          <span className="grid size-full place-items-center rounded-full bg-key text-white shadow-xs">
+            <Pin size={10} strokeWidth={2.4} className="rotate-[30deg]" />
+          </span>
+        </span>
+      )}
     </span>
   );
 }
 
-const pinButton =
-  'absolute top-1/2 right-1 grid size-6 -translate-y-1/2 place-items-center rounded-[5px] text-secondary opacity-0 hover:bg-quaternary hover:text-primary focus-visible:opacity-100 group-hover/row:opacity-100 aria-pressed:text-key';
+const moreButton =
+  'absolute top-1/2 right-1 grid size-6 -translate-y-1/2 place-items-center rounded-[5px] text-secondary opacity-0 hover:bg-quaternary hover:text-primary focus-visible:opacity-100 group-hover/row:opacity-100 aria-expanded:bg-quaternary aria-expanded:text-primary aria-expanded:opacity-100';
 
 /** The playlist id behind a YouTube Music pin (`ytm:VL…`); null for Spotify's, which can't take a drop. */
 const ytmPlaylistId = (pin: PinData): string | null => (pin.key.startsWith('ytm:') ? pin.key.slice(4).replace(/^VL/, '') || null : null);
 
 /**
- * One playlist row: cover, name, and a pin toggle that shows on hover. A song
+ * One playlist row: cover, name, and a ⋯ menu that shows on hover (play, pin, queue, save). A song
  * dragged from a track list can be dropped on a YouTube Music playlist's row to
  * add it; the row lights up while one is over it and confirms (or says it
  * failed) afterwards.
@@ -131,6 +148,8 @@ function PlaylistRow({
     s.over?.key === pin.key && s.key !== pin.key && s.section === section ? (s.over.after ? 'after' : 'before') : null,
   );
   const [over, setOver] = useState(false);
+  const [menu, setMenu] = useState<HTMLElement | null>(null);
+  const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<'added' | 'failed' | null>(null);
   const resultTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => void (resultTimer.current && clearTimeout(resultTimer.current)), []);
@@ -218,14 +237,14 @@ function PlaylistRow({
       )}
       <PrefetchNavLink
         to={pin.href}
-        className={`${item} pr-8${over ? ' bg-quaternary shadow-[inset_0_0_0_1.5px_var(--keyColor)]' : ''}${
+        className={`${playlistItem} pr-8${over ? ' bg-quaternary shadow-[inset_0_0_0_1.5px_var(--keyColor)]' : ''}${
           dragging && playlistId !== null && !over ? ' bg-quinary' : ''
         }`}
         onClick={onNavigate}
         // Drag a playlist up or down to change the order it is listed in.
         draggable
       >
-        <Cover src={pin.thumbnail} />
+        <Cover src={pin.thumbnail} pinned={pinned} />
         <span className={navLabel}>{pin.title}</span>
       </PrefetchNavLink>
       {result ? (
@@ -236,17 +255,34 @@ function PlaylistRow({
         >
           {result === 'added' ? <Check size={15} strokeWidth={2.6} /> : <TriangleAlert size={15} strokeWidth={2.2} />}
         </span>
+      ) : busy ? (
+        <span className="pointer-events-none absolute top-1/2 right-1.5 grid size-6 -translate-y-1/2 place-items-center text-secondary" role="status" aria-label="Loading playlist">
+          <Loader2 size={15} strokeWidth={2.2} className="animate-spin" />
+        </span>
       ) : (
         <button
           type="button"
-          className={pinButton}
-          aria-pressed={pinned}
-          aria-label={pinned ? `Unpin ${pin.title}` : `Pin ${pin.title}`}
-          title={pinned ? 'Unpin' : 'Pin to top'}
-          onClick={() => toggle(pin)}
+          className={moreButton}
+          aria-haspopup="menu"
+          aria-expanded={menu !== null}
+          aria-label={`More options for ${pin.title}`}
+          title="More"
+          onClick={(event) => setMenu(menu ? null : event.currentTarget)}
         >
-          {pinned ? <PinOff size={14} strokeWidth={2} /> : <Pin size={14} strokeWidth={2} />}
+          <MoreHorizontal size={15} strokeWidth={2} />
         </button>
+      )}
+      {menu && (
+        <PlaylistRowMenu
+          anchor={menu}
+          pin={pin}
+          pinned={pinned}
+          playlistId={playlistId}
+          onClose={() => setMenu(null)}
+          onTogglePin={() => toggle(pin)}
+          // The id as the playlist's own page uses it, so its songs are read once between the two.
+          onAction={(action: PlaylistAction) => playlistId && void runPlaylistAction(action, pin, pin.key.slice(4), setBusy)}
+        />
       )}
     </li>
   );
@@ -264,7 +300,7 @@ function reordering(keys: string[], move: (from: string, to: string, after: bool
   };
 }
 
-/** Pinned playlists, above the rest, from either catalogue. */
+/** Pinned playlists on their own, for when YouTube Music isn't signed in (otherwise they sit under Playlists). */
 function PinnedNav({ onNavigate }: { onNavigate: () => void }) {
   const pins = usePins((s) => s.pins);
   const move = usePins((s) => s.move);
@@ -353,7 +389,7 @@ function PlaylistsHeader({ onNavigate }: { onNavigate: () => void }) {
             </button>
             <button
               type="button"
-              className="h-7 rounded-[6px] bg-key-bg px-3 type-callout-emphasized text-white disabled:opacity-40 enabled:hover:opacity-90"
+              className="h-7 rounded-[6px] bg-key px-3 type-callout-emphasized text-white disabled:opacity-40 enabled:hover:opacity-90"
               disabled={!title || create.isPending}
               onClick={submit}
             >
@@ -398,6 +434,8 @@ function LibraryNav({ onNavigate }: { onNavigate: () => void }) {
         after,
       ),
   );
+  const movePin = usePins((s) => s.move);
+  const pinOrder = reordering(pins.map((p) => p.key), movePin);
   return (
     <>
       <h2 className={sectionHeader}>Library</h2>
@@ -410,6 +448,11 @@ function LibraryNav({ onNavigate }: { onNavigate: () => void }) {
             <span className={navLabel}>{LIBRARY_SECTIONS.playlists.title}</span>
           </PrefetchNavLink>
         </li>
+        {/* Pinned playlists, from either catalogue, stay at the top of Playlists with a line below them. */}
+        {pins.map((pin) => (
+          <PlaylistRow key={pin.key} pin={pin} pinned section="pinned" {...pinOrder} onNavigate={onNavigate} />
+        ))}
+        {pins.length > 0 && listed.length > 0 && <li role="separator" className="mx-2 my-1.5 border-t-[0.5px] border-t-vibrant-divider" />}
         {listed.map((row) => (
           <PlaylistRow key={row.key} pin={row} pinned={false} section="ytm" {...order} onNavigate={onNavigate} />
         ))}
@@ -503,7 +546,7 @@ export function Sidebar() {
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto pr-3 pl-5 [scrollbar-width:none]">
           <NavList items={PRIMARY} onNavigate={close} />
-          <PinnedNav onNavigate={close} />
+          {!signedIn && <PinnedNav onNavigate={close} />}
           {signedIn && <LibraryNav onNavigate={close} />}
           {spotifySignedIn && <SpotifyNav onNavigate={close} />}
         </div>

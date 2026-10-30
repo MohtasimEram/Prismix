@@ -305,21 +305,45 @@ export async function fetchLibraryPlaylists(): Promise<MusicItem[]> {
   return data.grid.filter((item) => item.kind === 'playlist');
 }
 
+/** Every playlist of the account, page after page (the sidebar needs only the first). */
+export async function fetchAllLibraryPlaylists(): Promise<MusicItem[]> {
+  const found = new Map<string, MusicItem>();
+  let page: Paged<BrowsePage> | null = await fetchLibrary('playlists');
+  for (let n = 0; page && n < 12; n++) {
+    for (const item of page.data.grid) if (item.kind === 'playlist') found.set(bareId(item.id), item);
+    page = page.next ? await page.next().catch(() => null) : null;
+  }
+  return [...found.values()];
+}
+
 export type LikeStatus = 'LIKE' | 'DISLIKE' | 'INDIFFERENT';
 
 /** The thumbs state YouTube Music shows on its player for this track. */
 export async function fetchLikeStatus(videoId: string): Promise<LikeStatus> {
   const yt = await getSignedInnertube();
   const response = await yt.actions.execute('/next', { videoId, client: 'YTMUSIC' });
-  const button = collect((response.data as Raw).playerOverlays, 'likeButtonRenderer')[0];
-  const status = button?.likeStatus;
-  return status === 'LIKE' || status === 'DISLIKE' ? status : 'INDIFFERENT';
+  const data = response.data as Raw;
+  // The player's own like button first; the answer's other like buttons only if it has none.
+  const buttons = [...collect(data.playerOverlays, 'likeButtonRenderer'), ...collect(data, 'likeButtonRenderer')];
+  const own = buttons.find((b) => (b.target as { videoId?: string } | undefined)?.videoId === videoId) ?? buttons[0];
+  const status = own?.likeStatus;
+  if (status === 'LIKE' || status === 'DISLIKE') return status;
+  // YouTube's answer misses some songs that are plainly in Liked Music (added long ago, or as
+  // another cut of the song): Liked Music's own contents are what the star must agree with.
+  if (await playlistHasTrack(LIKED_MUSIC_PLAYLIST, videoId).catch(() => false)) return 'LIKE';
+  return 'INDIFFERENT';
 }
 
 /** Likes a track (it joins Liked Music) or takes the like back. */
 export async function setTrackLiked(videoId: string, liked: boolean): Promise<void> {
   const yt = await getSignedInnertube();
   await yt.actions.execute(liked ? '/like/like' : '/like/removelike', { target: { videoId }, client: 'YTMUSIC' });
+  // What is known of Liked Music's contents follows the change, so the star never contradicts it.
+  const known = membership.get(LIKED_MUSIC_PLAYLIST);
+  if (known) {
+    if (liked) known.ids.add(videoId);
+    else known.ids.delete(videoId);
+  }
 }
 
 /**
@@ -376,6 +400,7 @@ const bareId = (playlistId: string) => playlistId.replace(/^VL/, '');
 
 /** The video ids each playlist held when last read, so reopening the card doesn't re-read every playlist. */
 const MEMBERSHIP_TTL = 60_000;
+const LIKED_MEMBERSHIP_TTL = 10 * 60_000;
 const membership = new Map<string, { at: number; ids: Set<string>; complete: boolean }>();
 const MAX_PLAYLIST_PAGES = 100;
 
@@ -392,8 +417,10 @@ export function forgetPlaylistContents(playlistId: string): void {
 export async function playlistHasTrack(playlistId: string, videoId: string, fresh = false): Promise<boolean> {
   const id = bareId(playlistId);
   const cached = membership.get(id);
-  if (!fresh && cached && Date.now() - cached.at < MEMBERSHIP_TTL && cached.ids.has(videoId)) return true;
-  if (!fresh && cached && Date.now() - cached.at < MEMBERSHIP_TTL && cached.complete) return false;
+  // Liked Music is read for every song the player shows, so it is kept longer; likes and unlikes update it (setTrackLiked).
+  const ttl = id === LIKED_MUSIC_PLAYLIST ? LIKED_MEMBERSHIP_TTL : MEMBERSHIP_TTL;
+  if (!fresh && cached && Date.now() - cached.at < ttl && cached.ids.has(videoId)) return true;
+  if (!fresh && cached && Date.now() - cached.at < ttl && cached.complete) return false;
   const ids = new Set<string>();
   let complete = false;
   try {
@@ -433,6 +460,11 @@ export async function playlistHasTrack(playlistId: string, videoId: string, fres
  */
 export async function addToPlaylist(playlistId: string, videoId: string): Promise<'added' | 'duplicate'> {
   const id = bareId(playlistId);
+  // Liked Music is not edited like a playlist: a song joins it by being liked.
+  if (id === LIKED_MUSIC_PLAYLIST) {
+    await setTrackLiked(videoId, true);
+    return 'added';
+  }
   if (await playlistHasTrack(id, videoId, true).catch(() => false)) return 'duplicate';
   const yt = await getSignedInnertube();
   await yt.actions.execute('/browse/edit_playlist', {
@@ -442,6 +474,83 @@ export async function addToPlaylist(playlistId: string, videoId: string): Promis
   });
   forgetPlaylistContents(id);
   return 'added';
+}
+
+/**
+ * Adds every song of one playlist to another of the account's playlists (YouTube's own
+ * "Save to playlist" for a whole playlist). Songs already in the target are added again.
+ */
+export async function addPlaylistToPlaylist(targetId: string, sourceId: string): Promise<void> {
+  const target = bareId(targetId);
+  if (target === LIKED_MUSIC_PLAYLIST || target === bareId(sourceId)) throw new Error('That playlist can’t be added to itself or to Liked Music');
+  const yt = await getSignedInnertube();
+  const fullSourceId = sourceId.startsWith('VL') ? sourceId : `VL${bareId(sourceId)}`;
+  try {
+    await yt.actions.execute('/browse/edit_playlist', {
+      playlistId: target,
+      actions: [{ action: 'ACTION_ADD_PLAYLIST', addedFullListId: fullSourceId }],
+      client: 'YTMUSIC',
+    });
+  } catch {
+    // Fast batch fallback: batch all video additions in single requests of up to 50 items
+    try {
+      const playlist = await yt.music.getPlaylist(sourceId);
+      const videoIds: string[] = [];
+      for (const item of playlist.items) {
+        const id = (item as { id?: string; video_id?: string }).id ?? (item as { id?: string; video_id?: string }).video_id;
+        if (typeof id === 'string') videoIds.push(id);
+      }
+      if (videoIds.length > 0) {
+        const CHUNK = 50;
+        for (let i = 0; i < videoIds.length; i += CHUNK) {
+          const chunk = videoIds.slice(i, i + CHUNK);
+          await yt.actions.execute('/browse/edit_playlist', {
+            playlistId: target,
+            actions: chunk.map((addedVideoId) => ({
+              action: 'ACTION_ADD_VIDEO',
+              addedVideoId,
+              dedupeOption: 'DEDUPE_OPTION_SKIP',
+            })),
+            client: 'YTMUSIC',
+          }).catch(() => null);
+        }
+      }
+    } catch {
+      // ignore secondary errors
+    }
+  }
+  forgetPlaylistContents(target);
+}
+
+/** Removes all tracks of [sourceId] from [targetId] in fast batches. */
+export async function removePlaylistFromPlaylist(targetId: string, sourceId: string): Promise<void> {
+  const target = bareId(targetId);
+  const yt = await getSignedInnertube();
+  try {
+    const playlist = await yt.music.getPlaylist(sourceId);
+    const videoIds: string[] = [];
+    for (const item of playlist.items) {
+      const id = (item as { id?: string; video_id?: string }).id ?? (item as { id?: string; video_id?: string }).video_id;
+      if (typeof id === 'string') videoIds.push(id);
+    }
+    if (videoIds.length > 0) {
+      const CHUNK = 50;
+      for (let i = 0; i < videoIds.length; i += CHUNK) {
+        const chunk = videoIds.slice(i, i + CHUNK);
+        await yt.actions.execute('/browse/edit_playlist', {
+          playlistId: target,
+          actions: chunk.map((removedVideoId) => ({
+            action: 'ACTION_REMOVE_VIDEO_BY_VIDEO_ID',
+            removedVideoId,
+          })),
+          client: 'YTMUSIC',
+        }).catch(() => null);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  forgetPlaylistContents(target);
 }
 
 /** Takes a track out of a playlist (every copy of it, by video id). */
@@ -513,10 +622,12 @@ export async function setPlaylistPrivacy(playlistId: string, privacy: PlaylistPr
  * Returns its id, without the VL.
  */
 export async function createPlaylist(title: string, videoIds: string[], description = '', privacy: PlaylistPrivacy = 'PRIVATE'): Promise<string> {
+  const clean = title.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!clean || clean.length > PLAYLIST_NAME_MAX) throw new Error('A playlist name is 1 to 150 characters');
   const yt = await getSignedInnertube();
   const ids = [...new Set(videoIds)];
   const response = await yt.actions.execute('/playlist/create', {
-    title,
+    title: clean,
     description,
     privacyStatus: privacy,
     ...(ids.length > 0 && { videoIds: ids }),
@@ -586,6 +697,37 @@ function panelCandidate(raw: Raw): Candidate | null {
   };
 }
 
+/**
+ * Songs to suggest for a playlist: the radio of each of [seedIds] (music tracks from the
+ * playlist), taken in turn so every seed is heard from, catalogue songs preferred, none
+ * repeated and none of the seeds themselves. Callers drop what the playlist already holds.
+ */
+export async function fetchPlaylistRecommendations(seedIds: string[]): Promise<Track[]> {
+  const settled = await Promise.allSettled(seedIds.map((id) => fetchRadio(id)));
+  const radios = settled.flatMap((r) => {
+    if (r.status !== 'fulfilled') return [];
+    // Prefer catalogue (ATV) cuts; fall back to all cuts for seeds whose radio returns only
+    // video-typed items (e.g. a plain YouTube video or an official music video seed).
+    const catalogue = r.value.filter((c) => !c.isVideo).map((c) => c.track);
+    const all = r.value.map((c) => c.track);
+    const picks = catalogue.length > 0 ? catalogue : all;
+    return picks.length > 0 ? [picks] : [];
+  });
+  if (!radios.length) throw new Error('No suggestions could be loaded');
+  const seen = new Set<string>(seedIds);
+  const out: Track[] = [];
+  for (let at = 0; out.length < 60 && radios.some((radio) => at < radio.length); at++) {
+    for (const radio of radios) {
+      const track = radio[at];
+      if (track && !seen.has(track.videoId)) {
+        seen.add(track.videoId);
+        out.push(track);
+      }
+    }
+  }
+  return out;
+}
+
 // ---- Player links ---------------------------------------------------------------
 
 /**
@@ -599,6 +741,47 @@ export async function fetchTrackLinks(videoId: string): Promise<Track | null> {
   // The row holding this video, by either of its cuts; its catalogue cut names the album.
   const row = (panel.contents as unknown as Raw[]).find((raw) => panelCuts(raw).some((cut) => cut.video_id === videoId));
   return (row && panelCandidate(row)?.track) ?? null;
+}
+
+export interface TrackCreditSection {
+  title: string;
+  items: string[];
+}
+
+export interface TrackCredits {
+  title: string;
+  sections: TrackCreditSection[];
+}
+
+/**
+ * Official song credits from YouTube Music (InnerTube MPTC browse endpoint).
+ * Returns sections such as "Performed by", "Written by", "Produced by", and label information.
+ */
+export async function fetchTrackCredits(videoId: string): Promise<TrackCredits | null> {
+  const yt = await getMusicClient();
+  try {
+    const res = await yt.actions.execute('/browse', { browseId: `MPTC${videoId}`, client: 'YTMUSIC' });
+    const popup = (res.data as Record<string, unknown>)?.onResponseReceivedActions as
+      | Array<{ openPopupAction?: { popup?: { dismissableDialogRenderer?: { title?: string; sections?: Array<{ dismissableDialogContentSectionRenderer?: { title?: { runs?: Array<{ text?: string }> }; subtitle?: { runs?: Array<{ text?: string }> } } }> } } } }>
+      | undefined;
+    const renderer = popup?.[0]?.openPopupAction?.popup?.dismissableDialogRenderer;
+    if (!renderer?.sections?.length) return null;
+
+    const sections: TrackCreditSection[] = [];
+    for (const s of renderer.sections) {
+      const sec = s.dismissableDialogContentSectionRenderer;
+      if (!sec) continue;
+      const title = sec.title?.runs?.map((r) => r.text ?? '').join('').trim();
+      const rawText = sec.subtitle?.runs?.map((r) => r.text ?? '').join('') ?? '';
+      const items = rawText.split('\n').map((t) => t.trim()).filter(Boolean);
+      if (title && items.length > 0) {
+        sections.push({ title, items });
+      }
+    }
+    return sections.length > 0 ? { title: renderer.title || 'Song credits', sections } : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router';
 import { DetailHeader } from '@/components/music/DetailHeader';
 import { playList, shuffleList } from '@/components/music/play';
 import { DownloadAllButton } from '@/components/music/DownloadAllButton';
+import { PlaylistRecommendations } from '@/components/music/PlaylistRecommendations';
 import { PinButton } from '@/components/music/PinButton';
 import { PlaylistMoreButton } from '@/components/music/PlaylistMoreButton';
 import type { Privacy } from '@/components/music/playlistPrivacy';
@@ -107,10 +108,13 @@ export default function PlaylistPage() {
         variant="playlist"
         onNearEnd={onNearEnd}
         source={context.source}
-        onRemove={editable ? (track) => remove.mutate({ playlistId: id, videoId: track.videoId }) : undefined}
+        savedHere={editable || isLiked}
+        onRemove={editable ? (track) => remove.mutate({ playlistId: id, videoId: track.videoId, title: header.title }) : undefined}
         onReorder={canReorder ? (from, before) => reorder.mutate({ playlistId: id, tracks, from, before }) : undefined}
       />
       {isFetchingNextPage && <div className="flex justify-center py-5 type-callout text-secondary">Loading more songs…</div>}
+      {/* Liked Music has no suggestions of its own. */}
+      {!isLiked && <PlaylistRecommendations playlistId={id} playlistTitle={header.title} tracks={tracks} editable={editable} />}
       {playlist.isFetchNextPageError && <LoadMoreError onRetry={() => void fetchNextPage()} />}
       <footer className={detailFooter}>
         <p>{header.meta}</p>

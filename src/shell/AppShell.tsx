@@ -9,7 +9,9 @@ import { useScrobbler } from '@/playback/scrobbling';
 import { useLayout } from '@/state/layout';
 import { startSessionMemory } from '@/state/session';
 import { useUi } from '@/state/ui';
+import { AddToPlaylistDialog } from '@/components/music/AddToPlaylistDialog';
 import { DownloadToasts } from './DownloadToasts';
+import { PlayerNotice } from './PlayerNotice';
 import { UpdateToast } from './UpdateToast';
 import { MobileTopBar } from './MobileTopBar';
 import { PlayerBar } from './PlayerBar';
@@ -187,6 +189,8 @@ export function AppShell() {
         <UpdateToast />
       </div>
       <FullScreenLayer />
+      <PlayerNotice />
+      <AddToPlaylistDialog />
     </div>
   );
 }

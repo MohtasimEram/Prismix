@@ -10,6 +10,7 @@ import { extendStation } from '@/playback/queue/builder';
 import {
   applyJump,
   asEntry,
+  autoplaySectionStart,
   BACK_RESTARTS_AFTER_SEC,
   buildContextQueue,
   buildOneOffQueue,
@@ -76,8 +77,8 @@ interface PlayerState extends Settings {
   playTrack: (track: Track, source: QueueSource) => void;
   /** Plays a bare video id (the Debug page). */
   playVideo: (videoId: string, hint?: Partial<Omit<NowPlaying, 'videoId'>>) => Promise<void>;
-  playNext: (tracks: Track[], source?: QueueSource | null) => void;
-  addToQueue: (tracks: Track[], source?: QueueSource | null) => void;
+  playNext: (tracks: Track[], source?: QueueSource | null, options?: QueueOptions) => void;
+  addToQueue: (tracks: Track[], source?: QueueSource | null, options?: QueueOptions) => void;
   /** Tapping a row in Up Next (QueueTimeline.computeJumpOrder). */
   jumpTo: (index: number) => void;
   removeAt: (index: number) => void;
@@ -283,13 +284,13 @@ export const usePlayer = create<PlayerState>()((set, get) => ({
     );
   },
 
-  playNext(tracks, source = null) {
-    insertUser(tracks, source, true);
+  playNext(tracks, source = null, options = {}) {
+    insertUser(tracks, source, true, options);
     intent();
   },
 
-  addToQueue(tracks, source = null) {
-    insertUser(tracks, source, false);
+  addToQueue(tracks, source = null, options = {}) {
+    insertUser(tracks, source, false, options);
     intent();
   },
 
@@ -452,16 +453,32 @@ function positions(queue: readonly QueueEntry[]): Map<string, number> {
   return new Map(queue.map((e, i) => [e.entryId, i]));
 }
 
-function insertUser(tracks: Track[], source: QueueSource | null, isNext: boolean) {
+/** Extra choices for Play Next and Add to Queue. */
+export interface QueueOptions {
+  /**
+   * Queueing a playlist or album again moves it: the songs an earlier Play Next or Add to Queue of the
+   * same [source] left in the upcoming queue are taken out first, so each is queued once, where it was just sent.
+   */
+  replacing?: boolean;
+  /** Add to Queue only: the songs go to the end of what is coming up (before AutoPlay), not straight after the playing song and the songs already queued by hand. */
+  toEnd?: boolean;
+}
+
+function insertUser(tracks: Track[], source: QueueSource | null, isNext: boolean, { replacing = false, toEnd = false }: QueueOptions = {}) {
   if (!tracks.length) return;
-  const { queue, index } = usePlayer.getState();
+  const { queue: current, index } = usePlayer.getState();
   const entries = tracks.map((t) => asEntry(t, 'user', source));
   if (index < 0) {
     usePlayer.setState({ queue: entries });
     void startAt(0);
     return;
   }
-  const at = userQueueInsertionIndex(queue, index, isNext);
+  // Only upcoming hand-queued songs of that same source go; what is behind the playing song stays.
+  const queue =
+    replacing && source?.id
+      ? current.filter((e, i) => !(i > index && e.tier === 'user' && e.source?.id === source.id && e.source?.type === source.type))
+      : current;
+  const at = toEnd && !isNext ? autoplaySectionStart(queue.map((e) => e.tier), index) : userQueueInsertionIndex(queue, index, isNext);
   usePlayer.setState({ queue: [...queue.slice(0, at), ...entries, ...queue.slice(at)] });
 }
 

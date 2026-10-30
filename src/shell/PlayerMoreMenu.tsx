@@ -1,7 +1,8 @@
-import { Disc, Download, Gauge, MoreVertical, Trash2, User, Video, VideoOff } from 'lucide-react';
+import { Disc, Download, Gauge, MoreVertical, Trash2, User, Users, Video, VideoOff } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Menu, MenuItem, MenuSeparator } from '@/components/Menu';
+import { CreditsDialog } from '@/components/music/CreditsDialog';
 import { ShareItem } from '@/components/music/TrackMenu';
 import { artistCredits, normalizedArtistName } from '@/lib/artistCredits';
 import { downloadTrack, removeDownload, useDownloads } from '@/playback/download';
@@ -13,7 +14,7 @@ import { albumPageFor, artistPageFor } from './nowPlayingLinks';
 import { TempoPitchPanel } from './TempoPitchButton';
 
 /**
- * The player bar's ⋮ menu, after the volume: Go to Album and Go to Artist, Download (saves
+ * The player bar's ⋮ menu, after the volume: Go to Album, Go to Artist, View credits, Download (saves
  * the playing song; once saved, deletes the file again), Watch Video (when the song has one), Tempo & Pitch and Share.
  */
 export function PlayerMoreMenu({ className, onActivate }: { className?: string; /** Pointer or focus arrives on the button: the volume level next to it can slide away. */ onActivate?: (() => void) | undefined }) {
@@ -32,6 +33,7 @@ export function PlayerMoreMenu({ className, onActivate }: { className?: string; 
   });
   const navigate = useNavigate();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const [creditsOpen, setCreditsOpen] = useState(false);
   // The element the tempo panel hangs from, kept after the menu closes.
   const [tempoAnchor, setTempoAnchor] = useState<HTMLElement | null>(null);
   const closeMenu = useCallback(() => setAnchor(null), []);
@@ -89,6 +91,15 @@ export function PlayerMoreMenu({ className, onActivate }: { className?: string; 
                   {credits.length === 1 ? 'Go to Artist' : `Go to ${credit.name}`}
                 </MenuItem>
               ))}
+              <MenuItem
+                icon={<Users size={15} />}
+                onSelect={() => {
+                  closeMenu();
+                  setCreditsOpen(true);
+                }}
+              >
+                View credits
+              </MenuItem>
               <MenuSeparator />
             </>
           )}
@@ -129,6 +140,15 @@ export function PlayerMoreMenu({ className, onActivate }: { className?: string; 
         </Menu>
       )}
       {tempoAnchor && <TempoPitchPanel anchor={tempoAnchor} onClose={closeTempo} />}
+      {creditsOpen && nowPlaying && (
+        <CreditsDialog
+          videoId={nowPlaying.videoId}
+          title={nowPlaying.title}
+          artist={nowPlaying.artist}
+          album={entry?.album?.name ?? null}
+          onClose={() => setCreditsOpen(false)}
+        />
+      )}
     </>
   );
 }

@@ -1,9 +1,11 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown } from 'lucide-react';
+import { ArrowDown, Check, Plus } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
+import { useSavedSomewhere, useSignedIn } from '@/data/music/queries';
 import type { ArtistRef, Track } from '@/data/music/types';
+import { useAddDialog } from '@/state/addDialog';
 import { beginTrackDrag, useDragTrack } from '@/state/dragTrack';
 import { useDownloadsLibrary } from '@/state/downloadsLibrary';
 import { removeDownload } from '@/playback/download';
@@ -35,6 +37,8 @@ interface TrackListProps {
   onRemove?: ((track: Track) => void) | undefined;
   /** On the account's own playlist: rows can be dragged to a new place. [before] is the row to land above (`tracks.length` = the end). */
   onReorder?: ((from: number, before: number) => void) | undefined;
+  /** The list is one of the account's own playlists (or Liked Music): its songs show the badge as saved. */
+  savedHere?: boolean;
 }
 
 /** What a row needs to take part in dragging songs into a new order (see TrackList). */
@@ -89,7 +93,7 @@ function DownloadedBadge({ track, variant }: { track: Track; variant: Variant })
     <button
       className={`absolute top-1/2 grid size-4 -translate-y-1/2 place-items-center rounded-full bg-green text-black transition-opacity hover:opacity-75 disabled:opacity-50 ${
         // A fixed distance from the row's right edge, so every icon lines up whatever the time's width.
-        variant === 'playlist' ? 'end-[82px]' : 'end-[76px]'
+        variant === 'playlist' ? 'end-[92px]' : 'end-[86px]'
       }`}
       title="Downloaded. Click to delete the file"
       aria-label={`Delete the downloaded file of ${track.title}`}
@@ -102,6 +106,54 @@ function DownloadedBadge({ track, variant }: { track: Track; variant: Variant })
       onDoubleClick={(event) => event.stopPropagation()}
     >
       <ArrowDown size={11} strokeWidth={3.2} aria-hidden="true" />
+    </button>
+  );
+}
+
+/**
+ * The green badge that shows on a hovered row: a tick when the song is already in one of the
+ * account's playlists, a plus when it is in none. A click opens the Add to Playlist window.
+ * Which it is comes from one request, made only once the pointer has rested on the row.
+ */
+function AddBadge({ track, variant, hovered, savedHere }: { track: Track; variant: Variant; hovered: boolean; savedHere: boolean }) {
+  const signedIn = useSignedIn();
+  const [rested, setRested] = useState(false);
+  useEffect(() => {
+    if (!hovered) return setRested(false);
+    const timer = setTimeout(() => setRested(true), 250);
+    return () => clearTimeout(timer);
+  }, [hovered]);
+  // On one of the account's own playlists (or Liked Music) every row is, by the page itself, saved.
+  const known = useSavedSomewhere(track.videoId, signedIn && rested && !savedHere);
+  const saved = savedHere || known === true;
+  if (!signedIn) return null;
+  const label = saved ? 'Saved in a playlist. Edit playlists' : 'Add to playlist';
+  return (
+    <button
+      type="button"
+      className={`absolute top-1/2 hidden size-5 -translate-y-1/2 place-items-center rounded-full bg-key text-white group-focus-within/row:grid group-hover/row:grid hover:opacity-90 focus-visible:grid ${
+        // Just left of the ⋯ button, and right of the downloaded badge.
+        variant === 'playlist' ? 'end-[62px]' : 'end-[58px]'
+      }`}
+      title={saved ? 'Saved in a playlist' : 'Add to playlist'}
+      aria-label={`${label}: ${track.title}`}
+      aria-haspopup="dialog"
+      onClick={(event) => {
+        event.stopPropagation();
+        useAddDialog.getState().open({
+          videoId: track.videoId,
+          title: track.title,
+          artist: track.artists.map((a) => a.name).join(', '),
+          thumbnail: track.thumbnail,
+        });
+      }}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      {saved ? (
+        <Check size={13} strokeWidth={3.4} className="-translate-x-px" aria-hidden="true" />
+      ) : (
+        <Plus size={14} strokeWidth={3.2} aria-hidden="true" />
+      )}
     </button>
   );
 }
@@ -141,13 +193,15 @@ interface RowProps {
   onPlayRow: () => void;
   onRemove?: ((track: Track) => void) | undefined;
   reorder?: Reorder | undefined;
+  savedHere: boolean;
 }
 
-function Row({ track, variant, position, fallbackArtwork, onPlayRow, onRemove, reorder }: RowProps) {
+function Row({ track, variant, position, fallbackArtwork, onPlayRow, onRemove, reorder, savedHere }: RowProps) {
   const current = usePlayer((s) => s.nowPlaying?.videoId === track.videoId);
   const playing = usePlayer((s) => s.nowPlaying?.videoId === track.videoId && (s.status === 'playing' || s.status === 'buffering'));
   const togglePlay = usePlayer((s) => s.togglePlay);
   const unavailable = track.unavailable;
+  const [hovered, setHovered] = useState(false);
   const onPlay = () => (unavailable ? undefined : current ? togglePlay() : onPlayRow());
 
   return (
@@ -161,6 +215,8 @@ function Row({ track, variant, position, fallbackArtwork, onPlayRow, onRemove, r
       data-drop-below={(reorder?.from != null && reorder.before === position && position - 1 === reorder.last) || undefined}
       title={unavailable === 'matching' ? 'Looking for this on YouTube Music…' : unavailable === 'missing' ? 'Not found on YouTube Music' : undefined}
       onDoubleClick={onPlay}
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
       // Drag a song onto a playlist in the sidebar to add it.
       draggable={!unavailable}
       onDragStart={(event) => {
@@ -260,6 +316,7 @@ function Row({ track, variant, position, fallbackArtwork, onPlayRow, onRemove, r
       <div className={`${cell} ${time[variant]} ${dimmed}`}>
         {/* The ⋯ button (TrackMenu) takes the time's place on hover, as Apple's rows do. */}
         {!unavailable && <DownloadedBadge track={track} variant={variant} />}
+        {!unavailable && <AddBadge track={track} variant={variant} hovered={hovered} savedHere={savedHere} />}
         <span className={unavailable ? undefined : 'group-focus-within/row:invisible group-hover/row:invisible group-has-[[data-open]]/row:invisible'}>
           {unavailable === 'missing' ? 'Not found' : formatDuration(track.durationSec)}
         </span>
@@ -291,7 +348,7 @@ function Header() {
  * hover fill, the number (or artwork) turning into a play button. Long lists
  * are virtualized against the page's scroll container (prompt §3).
  */
-export function TrackList({ tracks, variant, fallbackArtwork, fallbackArtists, onNearEnd, source, onRemove, onReorder }: TrackListProps) {
+export function TrackList({ tracks, variant, fallbackArtwork, fallbackArtists, onNearEnd, source, onRemove, onReorder, savedHere = false }: TrackListProps) {
   // Dragging rows into a new order: where the drag started and where it would land.
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dropBefore, setDropBefore] = useState<number | null>(null);
@@ -367,6 +424,7 @@ export function TrackList({ tracks, variant, fallbackArtwork, fallbackArtists, o
                   onPlayRow={() => playRow(item.index)}
                   onRemove={onRemove}
                   reorder={reorder}
+                  savedHere={savedHere}
                 />
               </div>
             ))}
@@ -382,6 +440,7 @@ export function TrackList({ tracks, variant, fallbackArtwork, fallbackArtists, o
               onPlayRow={() => playRow(i)}
               onRemove={onRemove}
               reorder={reorder}
+              savedHere={savedHere}
             />
           ))
         )}

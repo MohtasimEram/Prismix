@@ -407,3 +407,40 @@ html[data-window-fullscreen],
 html[data-desktop][data-window-fullscreen] {
   --titlebar-height: 0px;
 }
+
+/* ---- Custom Scrollbars: no arrow buttons, invisible track background ---- */
+::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+  background-color: transparent !important;
+}
+
+::-webkit-scrollbar-button,
+*::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track,
+::-webkit-scrollbar-track-piece,
+*::-webkit-scrollbar-track-piece,
+::-webkit-scrollbar-corner,
+*::-webkit-scrollbar-corner {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  background-color: var(--systemTertiary, rgba(255, 255, 255, 0.28)) !important;
+  border-radius: 9999px !important;
+}
+
+::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--systemSecondary, rgba(255, 255, 255, 0.48)) !important;
+}
+
