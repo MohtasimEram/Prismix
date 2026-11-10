@@ -12,11 +12,12 @@ import { useUi } from '@/state/ui';
 import { AddToPlaylistDialog } from '@/components/music/AddToPlaylistDialog';
 import { DownloadToasts } from './DownloadToasts';
 import { PlayerNotice } from './PlayerNotice';
-import { UpdateToast } from './UpdateToast';
+import { UpdateDialog } from './UpdateDialog';
 import { MobileTopBar } from './MobileTopBar';
 import { PlayerBar } from './PlayerBar';
 import { ScrollContainerContext } from './scrollContainer';
 import { SidePanel } from './SidePanel';
+import { useAutoOpenNowPlaying } from './useAutoOpenNowPlaying';
 import { Sidebar } from './Sidebar';
 import { isDesktop } from '@/desktop/tauri';
 import { useWindowState } from '@/desktop/window';
@@ -122,6 +123,7 @@ function usePanelWidths() {
  */
 export function AppShell() {
   useKeyboardShortcuts();
+  useAutoOpenNowPlaying();
   // In OS full screen the title bar is gone: the grid must drop its row (or the page sinks into
   // the wrong one) and the full-screen layer must start at the very top, not below a bar that isn't there.
   const windowFullscreen = useWindowState().fullscreen;
@@ -136,6 +138,8 @@ export function AppShell() {
   usePanelWidths();
   // The side panel takes its width out of the page, so shelves never run under it.
   const panelOpen = useUi((s) => !!s.sidePanel && !s.fullScreen);
+  // With no panel open, the Now Playing strip still takes its slim share of the right edge.
+  const stripShown = useUi((s) => !s.sidePanel && !s.fullScreen);
   const fullScreen = useUi((s) => s.fullScreen);
   // Listen Together: pick a party back up after a reload, and keep the player in step with it.
   useEffect(() => {
@@ -172,7 +176,7 @@ export function AppShell() {
           data-panel-open={panelOpen}
           className="absolute inset-y-0 left-0 min-w-0 overflow-x-hidden overflow-y-auto pl-(--web-navigation-width) transition-[right] duration-(--duration-panel) ease-panel data-tint:bg-(--page-tint) data-tint:transition-[background-color,right] data-tint:duration-300 data-tint:ease-in max-sm:pt-(--mobile-top-bar-height) max-sm:pl-0"
           style={{
-            right: panelOpen ? 'var(--side-panel-width)' : 0,
+            right: panelOpen ? 'var(--side-panel-width)' : stripShown ? 'var(--side-strip-reserve)' : 0,
             ...(fullScreen ? {} : { scrollbarGutter: 'stable' }),
           }}
         >
@@ -186,7 +190,7 @@ export function AppShell() {
         <PlayerBar />
         <SidePanel />
         <DownloadToasts />
-        <UpdateToast />
+        <UpdateDialog />
       </div>
       <FullScreenLayer />
       <PlayerNotice />

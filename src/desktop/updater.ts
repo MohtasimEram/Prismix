@@ -21,7 +21,7 @@ interface UpdaterState {
   /** 0–1 while downloading; null when the size is unknown. */
   progress: number | null;
   error: string | null;
-  /** The toast was dismissed; the update stays available in Settings. */
+  /** "Remind me later" was chosen; the update stays available in Settings. */
   dismissed: boolean;
   /** Looks for an update. Quiet checks (on launch) stay silent when there is none or it fails. */
   check: (options?: { quiet?: boolean }) => Promise<void>;
@@ -31,6 +31,30 @@ interface UpdaterState {
 
 /** The plugin's handle on the update found; it is not serialisable, so it lives outside the store. */
 let pending: Update | null = null;
+
+const SNOOZE_KEY = 'prismix:update-snooze';
+const SNOOZE_MS = 24 * 60 * 60 * 1000;
+
+/** Whether "Remind me later" was chosen for this version and its day hasn't passed. */
+function snoozed(version: string): boolean {
+  try {
+    const raw = localStorage.getItem(SNOOZE_KEY);
+    if (!raw) return false;
+    const saved = JSON.parse(raw) as { version?: unknown; until?: unknown };
+    return saved.version === version && typeof saved.until === 'number' && saved.until > Date.now();
+  } catch {
+    return false;
+  }
+}
+
+function writeSnooze(version: string | null) {
+  try {
+    if (version) localStorage.setItem(SNOOZE_KEY, JSON.stringify({ version, until: Date.now() + SNOOZE_MS }));
+    else localStorage.removeItem(SNOOZE_KEY);
+  } catch {
+    // Storage blocked: the reminder lasts for this run.
+  }
+}
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -51,7 +75,11 @@ export const useUpdater = create<UpdaterState>()((set, get) => ({
       const { check } = await import('@tauri-apps/plugin-updater');
       const update = await check();
       pending = update;
-      if (update) set({ status: 'available', version: update.version, notes: update.body ?? null, dismissed: false });
+      if (update) {
+        // A manual check from Settings always shows it; a background one respects "Remind me later".
+        if (!quiet) writeSnooze(null);
+        set({ status: 'available', version: update.version, notes: update.body ?? null, dismissed: quiet && snoozed(update.version) });
+      }
       else set({ status: 'uptodate', version: null, notes: null });
     } catch (error) {
       // A failed check on launch (offline, GitHub down) is not worth interrupting anyone for.
@@ -86,7 +114,10 @@ export const useUpdater = create<UpdaterState>()((set, get) => ({
     }
   },
 
-  dismiss: () => set({ dismissed: true }),
+  dismiss: () => {
+    writeSnooze(get().version);
+    set({ dismissed: true });
+  },
 }));
 
 const SIX_HOURS = 6 * 60 * 60 * 1000;
@@ -112,3 +143,6 @@ export async function appVersion(): Promise<string | null> {
     return null;
   }
 }
+
+// For browser-driven tests, next to __bcUi: `__bcUpdater.setState({ ... })` previews the update window.
+if (import.meta.env.DEV) Object.assign(window, { __bcUpdater: useUpdater });

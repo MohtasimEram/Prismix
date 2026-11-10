@@ -40,6 +40,8 @@
   --player-pill-height: 56px;
   --player-bottom-offset: 20px;
   --side-panel-width: 300px;
+  /* The room the collapsed Now Playing strip takes at the window's right edge (the strip's width). */
+  --side-strip-reserve: 44px;
   --mobile-top-bar-height: 52px;
   --mini-player-height: 52px;
   /* The custom window title bar (shell/TitleBar.tsx); 0 outside the desktop app. */
@@ -277,4 +279,11 @@
   --systemTertiary: var(--systemTertiary-onDark);
   --systemQuaternary: #ffffff2e;
   --systemQuinary: #ffffff1a;
+}
+
+/* Below 640px the side panel is full-width and there is no strip. */
+@media (max-width: 639.98px) {
+  :root {
+    --side-strip-reserve: 0px;
+  }
 }

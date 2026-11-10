@@ -121,10 +121,10 @@ export function Lcd() {
     <div
       className={`group/lcd relative grid h-full items-center gap-x-2 pb-1.5 ${video ? 'grid-cols-[60px_minmax(0,1fr)]' : 'grid-cols-[34px_minmax(0,1fr)]'}`}
     >
-      {/* As Apple's: the artwork opens the full-screen player, with an expand glyph on hover. */}
+      {/* As Apple's: the artwork opens the full-screen player, with an expand glyph on hover. Over the seek line it softens with the names. */}
       <button
         // A music video plays here in small, at 16:9.
-        className={`group/art relative block h-[34px] overflow-hidden rounded-[6px] bg-joe p-0 transition-[filter,opacity] ${video ? 'w-[60px] bg-black' : 'w-[34px]'}`}
+        className={`group/art relative block h-[34px] overflow-hidden rounded-[6px] bg-joe p-0 transition-[filter,opacity] group-has-[[data-scrubber]:hover]/lcd:opacity-30 group-has-[[data-scrubber]:hover]/lcd:blur-[3px] group-has-[[data-dragging]]/lcd:opacity-30 group-has-[[data-dragging]]/lcd:blur-[3px] ${video ? 'w-[60px] bg-black' : 'w-[34px]'}`}
         aria-label="Open full screen player"
         title="Open full screen player"
         onClick={() => openFullScreen(true)}
@@ -144,9 +144,9 @@ export function Lcd() {
         <VideoSurface
           className={`absolute inset-0 transition-opacity duration-300 ${video ? 'opacity-100' : 'opacity-0'}`}
         />
-        {/* Hovering anywhere on the player pill dims the artwork and shows the expand glyph. */}
+        {/* Hovering anywhere on the player pill dims the artwork and shows the expand glyph; over the seek line (or while dragging it) it steps aside. */}
         <span
-          className="absolute inset-0 grid place-items-center bg-[rgb(0_0_0/0.5)] text-white opacity-0 transition-opacity duration-200 group-hover/pill:opacity-100 group-focus-visible/art:opacity-100"
+          className="absolute inset-0 grid place-items-center bg-[rgb(0_0_0/0.5)] text-white opacity-0 transition-opacity duration-200 group-hover/pill:opacity-100 group-focus-visible/art:opacity-100 group-has-[[data-scrubber]:hover]/lcd:opacity-0! group-has-[[data-dragging]]/lcd:opacity-0!"
           aria-hidden="true"
         >
           <Maximize2 size={14} strokeWidth={2.25} />

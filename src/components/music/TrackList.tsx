@@ -6,6 +6,7 @@ import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
 import { useSavedSomewhere, useSignedIn } from '@/data/music/queries';
 import type { ArtistRef, Track } from '@/data/music/types';
 import { useAddDialog } from '@/state/addDialog';
+import { useJustSaved } from '@/state/justSaved';
 import { beginTrackDrag, useDragTrack } from '@/state/dragTrack';
 import { useDownloadsLibrary } from '@/state/downloadsLibrary';
 import { removeDownload } from '@/playback/download';
@@ -125,7 +126,10 @@ function AddBadge({ track, variant, hovered, savedHere }: { track: Track; varian
   }, [hovered]);
   // On one of the account's own playlists (or Liked Music) every row is, by the page itself, saved.
   const known = useSavedSomewhere(track.videoId, signedIn && rested && !savedHere);
-  const saved = savedHere || known === true;
+  // Added in this session: a tick at once, before YouTube's own answer is read.
+  const mark = useJustSaved((s) => s.marks.get(track.videoId));
+  // A mark made here wins over YouTube's lagging answer; a page that holds the song (savedHere) always counts.
+  const saved = savedHere || (mark ?? known === true);
   if (!signedIn) return null;
   const label = saved ? 'Saved in a playlist. Edit playlists' : 'Add to playlist';
   return (

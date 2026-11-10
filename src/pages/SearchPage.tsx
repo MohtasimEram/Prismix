@@ -1,6 +1,7 @@
-import { Clock, Play, X } from 'lucide-react';
+import { Play } from 'lucide-react';
+import { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
-import { useRecentSearches } from '@/state/recentSearches';
+import { forgetSearchSongs, rememberSearchSongs } from '@/state/recentSearches';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { Artwork } from '@/components/music/Artwork';
 import { CategoryTiles } from '@/components/music/CategoryTiles';
@@ -151,6 +152,11 @@ function Results({ query }: { query: string }) {
   const search = useSearch(query);
   const [params, setParams] = useSearchParams();
   const requested = params.get('tab');
+  // The songs on show: one that gets played from here is listed under Recent searches (state/recentSearches.ts).
+  const found = search.data;
+  useEffect(() => {
+    if (found) rememberSearchSongs([...found.top, ...found.songs, ...found.videos]);
+  }, [found]);
   if (search.isError) return <LoadError error={search.error} onRetry={() => void search.refetch()} />;
   if (!search.data) return <ResultsSkeleton />;
   const results = search.data;
@@ -165,7 +171,7 @@ function Results({ query }: { query: string }) {
   const only = (title: string, items: MusicItem[], layout: Shelf['layout']): Shelf[] =>
     items.length ? [{ title, strapline: null, layout, items, seeAll: null }] : [];
   return (
-    <>
+    <div>
       <TabBar tabs={tabs} current={current} onSelect={select} />
       {current === 'all' && (
         <>
@@ -196,56 +202,21 @@ function Results({ query }: { query: string }) {
           </div>
         </section>
       )}
-    </>
+    </div>
   );
 }
 
-/** The page's opening: a title, and the searches made before, to run again or forget. */
-function Hero({ onSearch }: { onSearch: (query: string) => void }) {
-  const recent = useRecentSearches((s) => s.recent);
-  const remove = useRecentSearches((s) => s.remove);
-  const clear = useRecentSearches((s) => s.clear);
+/** The page's opening: a title and a line of help. The searches made before are listed under the search field when it is clicked. */
+function Hero() {
   return (
     <header className="mx-(--body-gutter) pt-4 pb-2">
       <h1 className="type-[700_34px/40px] tracking-[-0.02em]">Search</h1>
       <p className="mt-1 type-body text-secondary">Find artists, songs, videos, albums and playlists, or browse by mood and genre.</p>
-      {recent.length > 0 && (
-        <section className="mt-5" aria-label="Recent searches">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="type-callout-emphasized text-secondary">Recent Searches</h2>
-            <button type="button" className="type-callout text-key hover:underline" onClick={clear}>
-              Clear
-            </button>
-          </div>
-          <ul className="flex flex-wrap gap-2">
-            {recent.map((query) => (
-              <li key={query} className="group/chip flex items-center rounded-full bg-quinary shadow-[inset_0_0_0_0.5px_var(--vibrantDivider)] transition-[background-color] duration-100 hover:bg-quaternary">
-                <button
-                  type="button"
-                  className="flex max-w-[260px] items-center gap-1.5 rounded-full py-1.5 ps-3 pe-1.5 type-callout text-primary"
-                  onClick={() => onSearch(query)}
-                >
-                  <Clock size={13} strokeWidth={2.2} className="flex-none text-secondary" aria-hidden="true" />
-                  <span className="truncate">{query}</span>
-                </button>
-                <button
-                  type="button"
-                  className="mr-1.5 grid size-5 flex-none place-items-center rounded-full text-secondary hover:bg-quaternary hover:text-primary"
-                  aria-label={`Remove ${query} from recent searches`}
-                  onClick={() => remove(query)}
-                >
-                  <X size={12} strokeWidth={2.6} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
     </header>
   );
 }
 
-function Landing({ onSearch }: { onSearch: (query: string) => void }) {
+function Landing() {
   const categories = useCategories();
   const body = categories.isError ? (
     <LoadError error={categories.error} onRetry={() => void categories.refetch()} />
@@ -260,7 +231,7 @@ function Landing({ onSearch }: { onSearch: (query: string) => void }) {
   );
   return (
     <>
-      <Hero onSearch={onSearch} />
+      <Hero />
       {body}
     </>
   );
@@ -271,12 +242,12 @@ export default function SearchPage() {
   const { missing } = useYouTubeReady();
   const [params, setParams] = useSearchParams();
   const query = params.get('q') ?? '';
-  const addRecent = useRecentSearches((s) => s.add);
   const search = (q: string) => {
     const trimmed = q.trim();
-    if (trimmed) addRecent(trimmed);
     setParams(trimmed ? { q: trimmed } : {});
   };
+  // Leaving the page, what it showed no longer counts as played from a search.
+  useEffect(() => forgetSearchSongs, []);
 
   return (
     <>
@@ -288,7 +259,7 @@ export default function SearchPage() {
       <div className="sticky top-0 z-[calc(var(--z-default)+5)] flex justify-center px-(--body-gutter) py-3 before:absolute before:inset-0 before:-z-1 before:bg-header-material before:[backdrop-filter:saturate(180%)_blur(20px)]">
         <SearchField initial={query} onSearch={search} />
       </div>
-      {missing ? <NeedsExtension what="and search YouTube Music" /> : query ? <Results query={query} /> : <Landing onSearch={search} />}
+      {missing ? <NeedsExtension what="and search YouTube Music" /> : query ? <Results query={query} /> : <Landing />}
     </>
   );
 }

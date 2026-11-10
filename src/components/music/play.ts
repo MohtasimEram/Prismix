@@ -1,6 +1,7 @@
 import type { ArtistRef, MusicItem, Track } from '@/data/music/types';
 import type { QueueSource } from '@/playback/queue/timeline';
 import { usePlayer } from '@/state/player';
+import { noteSongPlayed } from '@/state/recentSearches';
 
 /** A shelf or search item as a queue track. */
 export function toTrack(item: Track | MusicItem, fallbackArtwork?: string | null): Track {
@@ -21,6 +22,7 @@ export function toTrack(item: Track | MusicItem, fallbackArtwork?: string | null
 /** One song on its own (Search, Home, a shelf): the queue is that song, then AutoPlay. */
 export function playTrack(item: Track | MusicItem, fallbackArtwork?: string | null, source?: QueueSource) {
   const track = toTrack(item, fallbackArtwork);
+  noteSongPlayed(track.videoId);
   usePlayer.getState().playTrack(track, source ?? { title: track.title, type: 'other' });
 }
 
@@ -41,6 +43,7 @@ function prepared(tracks: Track[], { fallbackArtwork, fallbackArtists }: ListCon
 
 /** An album, playlist or list of songs, from [startIndex]: the list becomes the queue's context. */
 export function playList(tracks: Track[], startIndex: number, context: ListContext) {
+  noteSongPlayed(tracks[startIndex]?.videoId);
   usePlayer.getState().playTracks(prepared(tracks, context), startIndex, context.source);
 }
 

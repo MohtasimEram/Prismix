@@ -1,12 +1,58 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { lazy, Suspense } from 'react';
+import { ChevronLeft } from 'lucide-react';
+import { lazy, Suspense, useState } from 'react';
 import { SIDE_PANEL_LIMITS, useLayout } from '@/state/layout';
 import { useUi } from '@/state/ui';
+import { NowPlayingPanel } from './NowPlayingPanel';
 import { Resizer } from './Resizer';
 import { UpNext } from './UpNext';
 
 // am-lyrics is large; it loads the first time the panel opens (prompt §3).
 const LyricsPanel = lazy(() => import('./LyricsPanel').then((m) => ({ default: m.LyricsPanel })));
+
+/** The collapsed strip's width, and how wide it opens while the pointer is on it (the panel's own look peeks out). */
+const STRIP_WIDTH = 44;
+const STRIP_PEEK_WIDTH = 58;
+
+/**
+ * What is left at the window's right edge while no panel is open (Now Playing hidden, or Up Next / Lyrics
+ * closed): a thin glass strip with a chevron, the panel's full height and flush with the edge, so a click anywhere
+ * along the edge of the window reaches it. With the pointer on it, it opens a little and the Now Playing
+ * panel shows through, dimmed, as a hint of what is behind; a click brings the panel back.
+ */
+function PanelStrip() {
+  const reduced = useReducedMotion();
+  const [peek, setPeek] = useState(false);
+  return (
+    <motion.div
+      key="side-strip"
+      className="absolute inset-y-0 right-0 z-(--z-web-chrome) overflow-hidden glass-material shadow-glass max-sm:hidden"
+      initial={{ opacity: 0, width: STRIP_WIDTH }}
+      animate={{ opacity: 1, width: peek ? STRIP_PEEK_WIDTH : STRIP_WIDTH }}
+      exit={{ opacity: 0 }}
+      transition={reduced ? { duration: 0.12 } : { type: 'spring', stiffness: 460, damping: 38, mass: 0.7 }}
+      onPointerEnter={() => setPeek(true)}
+      onPointerLeave={() => setPeek(false)}
+    >
+      {peek && (
+        <div aria-hidden="true" inert className="pointer-events-none absolute inset-y-0 left-0 flex w-(--side-panel-width) flex-col opacity-35">
+          <NowPlayingPanel preview onHide={() => undefined} />
+        </div>
+      )}
+      <button
+        type="button"
+        className="absolute inset-0 grid place-items-center text-secondary hover:text-primary focus-visible:text-primary"
+        aria-label="Show Now Playing"
+        title="Show Now Playing"
+        onFocus={() => setPeek(true)}
+        onBlur={() => setPeek(false)}
+        onClick={() => useUi.getState().setSidePanel('now-playing')}
+      >
+        <ChevronLeft size={18} strokeWidth={2.2} />
+      </button>
+    </motion.div>
+  );
+}
 
 /** Up Next / Lyrics glass panel (report §7). */
 export function SidePanel() {
@@ -15,7 +61,10 @@ export function SidePanel() {
   const fullScreen = useUi((s) => s.fullScreen);
   const reduced = useReducedMotion();
   const open = !!panel && !fullScreen;
+  // With no panel open a strip stays at the edge to bring Now Playing back.
+  const showStrip = !panel && !fullScreen;
   const closePanel = useUi((s) => s.closeSidePanel);
+  const hideNowPlaying = useUi((s) => s.hideNowPlaying);
   const width = useLayout((s) => s.sidePanelWidth);
   const setWidth = useLayout((s) => s.setSidePanelWidth);
 
@@ -25,7 +74,7 @@ export function SidePanel() {
         <motion.aside
           key="side-panel"
           className="absolute inset-y-0 right-0 z-(--z-web-chrome) flex w-(--side-panel-width) flex-col glass-material shadow-glass max-sm:w-full"
-          aria-label={panel === 'up-next' ? 'Up Next' : 'Lyrics'}
+          aria-label={panel === 'up-next' ? 'Up Next' : panel === 'now-playing' ? 'Now Playing' : 'Lyrics'}
           initial={reduced ? { opacity: 0 } : { x: '100%', opacity: 0.4 }}
           animate={reduced ? { opacity: 1 } : { x: 0, opacity: 1 }}
           exit={reduced ? { opacity: 0 } : { x: '100%', opacity: 0.4 }}
@@ -51,6 +100,8 @@ export function SidePanel() {
             >
               {panel === 'up-next' ? (
                 <UpNext onClose={closePanel} />
+              ) : panel === 'now-playing' ? (
+                <NowPlayingPanel onHide={hideNowPlaying} />
               ) : (
                 <Suspense fallback={null}>
                   <LyricsPanel onClose={closePanel} />
@@ -60,6 +111,7 @@ export function SidePanel() {
           </AnimatePresence>
         </motion.aside>
       )}
+      {showStrip && <PanelStrip key="side-strip" />}
     </AnimatePresence>
   );
 }

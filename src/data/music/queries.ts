@@ -14,6 +14,7 @@ import { useYtAuth, ytAuthSnapshot } from '@/extension/useYtAuth';
 import { forgetPrivatePlaylist, rememberPrivatePlaylist } from '@/lib/privatePlaylists';
 import { queryClient } from '@/lib/queryClient';
 import { notify } from '@/state/notices';
+import { markOf, markSaved as markVideosSaved } from '@/state/justSaved';
 import { isVideoId } from '@/state/dragTrack';
 import {
   addPlaylistToPlaylist,
@@ -158,6 +159,24 @@ export function useSearch(query: string) {
 export function useBrowse(link: BrowseLink) {
   const { ready } = useYouTubeReady();
   return useQuery({ ...browseQuery(link), enabled: ready });
+}
+
+/**
+ * A real poster for a mood or genre tile: the cover of the first playlist or album on the page the tile opens
+ * (read once [enabled], and kept for that page). null when the page has none or can't be read.
+ */
+export function useCategoryPoster(link: BrowseLink, enabled: boolean) {
+  const { ready } = useYouTubeReady();
+  return useQuery({
+    ...browseQuery(link),
+    enabled: ready && enabled,
+    retry: false,
+    select: (page: BrowsePage): string | null => {
+      const candidates = [...page.grid, ...page.shelves.flatMap((shelf) => shelf.items)];
+      const found = candidates.find((item) => !!item.thumbnail && (item.kind === 'playlist' || item.kind === 'album' || item.kind === 'song' || item.kind === 'video'));
+      return found?.thumbnail ?? null;
+    },
+  });
 }
 export function useHome() {
   const { ready } = useYouTubeReady();
@@ -319,6 +338,17 @@ export function useSetLiked() {
     mutationFn: ({ videoId, liked }: { videoId: string; liked: boolean; silent?: boolean }) => setTrackLiked(videoId, liked),
     onMutate: ({ videoId, liked }) => {
       const previous = queryClient.getQueryData<LikeStatus>(likeKey(videoId));
+      // Liked Music counts as a playlist: the badge ticks at once (an unlike leaves it, the song may be elsewhere too).
+      const wasMarked = markOf(videoId);
+      if (liked) markVideosSaved([videoId], true);
+      else {
+        // Out of Liked Music: the badge goes back to "+" unless the song is in a playlist as well.
+        const key = addedKey(LIKED_MUSIC_PLAYLIST, videoId);
+        addedHere.delete(key);
+        markRemoved(key);
+        queryClient.setQueryData(hasKey(LIKED_MUSIC_PLAYLIST, videoId), false);
+        if (!savedElsewhere(videoId, LIKED_MUSIC_PLAYLIST)) markVideosSaved([videoId], false);
+      }
       queryClient.setQueryData<LikeStatus>(likeKey(videoId), liked ? 'LIKE' : 'INDIFFERENT');
       if (liked) unlikedHere.delete(videoId);
       else {
@@ -328,12 +358,13 @@ export function useSetLiked() {
           data && { ...data, pages: data.pages.map((page) => ({ ...page, tracks: page.tracks.filter((t) => t.videoId !== videoId) })) },
         );
       }
-      return { previous };
+      return { previous, wasMarked };
     },
     onSuccess: (_result, { liked, silent }) => {
       if (!silent) void announceLiked(liked ? 'Added to Liked Music' : 'Removed from Liked Music');
     },
     onError: (_error, { videoId, liked, silent }, context) => {
+      if (context) markVideosSaved([videoId], context.wasMarked);
       queryClient.setQueryData(likeKey(videoId), context?.previous);
       unlikedHere.delete(videoId);
       forgetPlaylistContents(LIKED_MUSIC_PLAYLIST);
@@ -423,6 +454,17 @@ export function usePlaylistOptions(videoId: string, enabled: boolean) {
   // Still reading some playlists' contents: a playlist shown as not holding the song may yet turn out to.
   const checking = checks.some((c) => c.isLoading);
   return { ...base, data, checking };
+}
+
+/** Whether the song is still in a playlist (or liked) other than [exceptId], as far as this session has read. */
+function savedElsewhere(videoId: string, exceptId: string): boolean {
+  const except = bareId(exceptId);
+  if (except !== LIKED_MUSIC_PLAYLIST && queryClient.getQueryData<LikeStatus>(likeKey(videoId)) === 'LIKE') return true;
+  const options = queryClient.getQueryData<PlaylistOption[]>(['music', 'playlist-options', videoId]);
+  if (options?.some((o) => bareId(o.playlistId) !== except && optionContains(o, videoId))) return true;
+  return queryClient
+    .getQueriesData<boolean>({ queryKey: ['music', 'playlist-has'] })
+    .some(([key, found]) => key[3] === videoId && bareId(String(key[2])) !== except && found === true && !removedHere.has(addedKey(String(key[2]), videoId)));
 }
 
 /**
@@ -532,6 +574,7 @@ export function announceChange(input: { text: string; detail?: string | undefine
 
 /** Notes that a song is now in a playlist, for a list that YouTube's own flag may lag behind. */
 export function noteAddedHere(playlistId: string, videoId: string): void {
+  markVideosSaved([videoId], true);
   addedHere.add(addedKey(playlistId, videoId));
   removedHere.delete(addedKey(playlistId, videoId));
   queryClient.setQueryData(hasKey(playlistId, videoId), true);
@@ -580,12 +623,46 @@ export async function loadPlaylistTracks(playlistId: string): Promise<Track[]> {
   return tracks;
 }
 
+/**
+ * Likes every song in [videoIds] (Liked Music takes songs by being liked, one request each), a few at a time.
+ * [onProgress] is told how many are done. Returns how many went through and how many YouTube refused.
+ */
+export async function likeAllTracks(videoIds: string[], onProgress?: (done: number, total: number) => void): Promise<{ liked: number; failed: number }> {
+  const ids = [...new Set(videoIds.filter((id) => isVideoId(id)))];
+  let next = 0;
+  let done = 0;
+  let failed = 0;
+  const worker = async () => {
+    while (next < ids.length) {
+      const id = ids[next++]!;
+      try {
+        await setTrackLiked(id, true);
+        unlikedHere.delete(id);
+        queryClient.setQueryData<LikeStatus>(likeKey(id), 'LIKE');
+        markVideosSaved([id], true);
+      } catch {
+        failed++;
+      }
+      onProgress?.(++done, ids.length);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, ids.length) }, worker));
+  forgetPlaylistContents(LIKED_MUSIC_PLAYLIST);
+  void queryClient.invalidateQueries({ queryKey: ['music', 'library', 'songs'] });
+  void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', LIKED_MUSIC_PLAYLIST] });
+  void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', `VL${LIKED_MUSIC_PLAYLIST}`] });
+  return { liked: ids.length - failed, failed };
+}
+
 /** Saves a whole playlist's songs into another of the account's playlists, and says so. */
 export function useAddPlaylistToPlaylist() {
   return useMutation({
     mutationFn: ({ targetId, sourceId }: { targetId: string; targetTitle: string; sourceId: string; sourceTitle: string }) =>
       addPlaylistToPlaylist(targetId, sourceId),
-    onSuccess: async (_result, { targetId, targetTitle, sourceTitle }) => {
+    onSuccess: async (_result, { targetId, targetTitle, sourceId, sourceTitle }) => {
+      // Every song of the source that is loaded now shows as saved.
+      const loaded = queryClient.getQueryData<InfiniteData<PlaylistChunk>>(playlistQuery(sourceId).queryKey);
+      if (loaded) markVideosSaved(loaded.pages.flatMap((page) => page.tracks.map((t) => t.videoId)), true);
       const info = await playlistInfo(targetId, targetTitle);
       announceChange({ text: `Added “${sourceTitle}” to ${info.title}`, cover: info.cover });
       void queryClient.invalidateQueries({ queryKey: ['music', 'playlist', targetId] });
@@ -619,7 +696,14 @@ export function useAddToPlaylist() {
   return useMutation({
     // [title] names the playlist in the notice when the caller knows it; [silent] leaves the notice to the caller.
     mutationFn: ({ playlistId, videoId }: { playlistId: string; videoId: string; title?: string; silent?: boolean }) => addToPlaylist(playlistId, videoId),
-    onError: (_error, { playlistId, title, silent }) => {
+    // The song's badge turns to a tick at once; it goes back if YouTube refuses.
+    onMutate: ({ playlistId, videoId }) => {
+      const wasMarked = markOf(videoId);
+      markVideosSaved([videoId], true);
+      return { wasMarked };
+    },
+    onError: (_error, { playlistId, videoId, title, silent }, context) => {
+      if (context) markVideosSaved([videoId], context.wasMarked);
       if (silent) return;
       if (bareId(playlistId) === LIKED_MUSIC_PLAYLIST) return void announceLiked('Couldn’t add to Liked Music', 'error');
       void playlistInfo(playlistId, title).then((info) =>
@@ -695,18 +779,22 @@ export function useRemoveFromPlaylist() {
       queryClient.setQueriesData<InfiniteData<PlaylistChunk>>(filter, (data) =>
         data && { ...data, pages: data.pages.map((page) => ({ ...page, tracks: page.tracks.filter((t) => t.videoId !== videoId) })) },
       );
+      const wasMarked = markOf(videoId);
       addedHere.delete(addedKey(playlistId, videoId));
       markRemoved(addedKey(playlistId, videoId));
       queryClient.setQueryData(hasKey(playlistId, videoId), false);
+      // Back to "+" at once, unless the song is still in another playlist or liked.
+      if (!savedElsewhere(videoId, playlistId)) markVideosSaved([videoId], false);
       // The playlist-options card drops its tick at once too.
       const optionsKey = ['music', 'playlist-options', videoId];
       const optionsBefore = queryClient.getQueryData<PlaylistOption[]>(optionsKey);
       queryClient.setQueryData<PlaylistOption[]>(optionsKey, (options) =>
         options?.map((o) => (o.playlistId.replace(/^VL/, '') === playlistId.replace(/^VL/, '') ? { ...o, contains: false } : o)),
       );
-      return { before, optionsBefore };
+      return { before, optionsBefore, wasMarked };
     },
     onError: (_error, { playlistId, videoId, title, silent }, context) => {
+      if (context) markVideosSaved([videoId], context.wasMarked);
       if (!silent) void playlistInfo(playlistId, title).then((info) => notify({ text: `Couldn’t remove from ${info.title}`, cover: { kind: 'image', src: info.cover }, tone: 'error' }));
       for (const [key, data] of context?.before ?? []) queryClient.setQueryData(key, data);
       removedHere.delete(addedKey(playlistId, videoId));

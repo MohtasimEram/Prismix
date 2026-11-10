@@ -101,7 +101,7 @@ export function PlayerBar() {
   return (
     // The side panel overlays the page; the pill re-centres in what's left.
     <div
-      className="pointer-events-none absolute right-0 bottom-(--player-bottom-offset) left-(--web-navigation-width) z-[calc(var(--z-web-chrome)-1)] flex justify-center px-5 transition-[padding-inline-end] duration-(--duration-panel) ease-panel data-[panel-open=true]:pe-[calc(var(--side-panel-width)+20px)] max-sm:hidden"
+      className="pointer-events-none absolute right-0 bottom-(--player-bottom-offset) left-(--web-navigation-width) z-[calc(var(--z-web-chrome)-1)] flex justify-center px-5 pe-[calc(var(--side-strip-reserve)+20px)] transition-[padding-inline-end] duration-(--duration-panel) ease-panel data-[panel-open=true]:pe-[calc(var(--side-panel-width)+20px)] max-sm:hidden"
       data-panel-open={sidePanel !== null}
       aria-hidden={fullScreen || undefined}
     >

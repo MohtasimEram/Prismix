@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   announceChange,
+  likeAllTracks,
+  loadPlaylistTracks,
   noteAddedHere,
   useAddPlaylistToPlaylist,
   useAddToPlaylist,
@@ -425,6 +427,8 @@ function PlaylistDialog({ source }: { source: AddDialogPlaylist }) {
   const addPlaylist = useAddPlaylistToPlaylist();
   const removePlaylist = useRemovePlaylistFromPlaylist();
   const create = useCreatePlaylist();
+  const likedCover = useLikedCover();
+  const [progress, setProgress] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
   const [choices, setChoices] = useState<Record<string, boolean>>({});
@@ -444,6 +448,11 @@ function PlaylistDialog({ source }: { source: AddDialogPlaylist }) {
     const seen = new Set<string>();
     const sourceBare = bare(source.playlistId);
 
+    // Liked Music takes the songs by liking each one. Once done it stays ticked: it can't be undone from here,
+    // as some of those songs may have been liked before.
+    if (sourceBare !== LIKED_MUSIC_PLAYLIST) {
+      list.push({ key: LIKED_KEY, title: 'Liked Music', cover: likedCover, liked: true, initial: isPlaylistInPlaylist(sourceBare, LIKED_MUSIC_PLAYLIST) });
+    }
     for (const p of library.data ?? []) {
       const key = bare(p.id);
       if (key === sourceBare || key === LIKED_MUSIC_PLAYLIST) continue;
@@ -459,7 +468,7 @@ function PlaylistDialog({ source }: { source: AddDialogPlaylist }) {
       }
     }
     return list;
-  }, [library.data, infos, made, source.playlistId]);
+  }, [library.data, infos, made, source.playlistId, likedCover]);
 
   const isOn = (row: Row) => (Object.hasOwn(choices, row.key) ? choices[row.key]! : row.initial);
   const changes = rows.filter((row) => Object.hasOwn(choices, row.key) && choices[row.key] !== row.initial);
@@ -555,7 +564,25 @@ function PlaylistDialog({ source }: { source: AddDialogPlaylist }) {
     const failed: Row[] = [];
     for (const row of changes) {
       const wanted = choices[row.key]!;
+      // Liked Music can only be added to from here.
+      if (row.liked && !wanted) continue;
       try {
+        if (row.liked) {
+          // Like every song of the playlist, a few at a time.
+          const songs = (await loadPlaylistTracks(source.playlistId)).filter((t) => !t.unavailable).map((t) => t.videoId);
+          if (!songs.length) throw new Error('No songs');
+          const { liked, failed: refused } = await likeAllTracks(songs, (done, total) => setProgress(`Liking ${done} of ${total}…`));
+          setProgress(null);
+          if (refused === songs.length) throw new Error('Nothing could be liked');
+          rememberPlaylistInPlaylist(source.playlistId, LIKED_MUSIC_PLAYLIST);
+          announceChange({
+            text: `Added ${liked} ${plural(liked, 'song', 'songs')} from “${source.title}” to Liked Music`,
+            detail: refused ? `${refused} couldn’t be added` : undefined,
+            cover: row.cover ?? 'liked',
+          });
+          added.push(row);
+          continue;
+        }
         if (wanted) {
           await addPlaylist.mutateAsync({
             targetId: row.key,
@@ -580,6 +607,7 @@ function PlaylistDialog({ source }: { source: AddDialogPlaylist }) {
       }
     }
     setBusy(false);
+    setProgress(null);
     const done = new Set([...added, ...removed].map((r) => r.key));
     setChoices((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !done.has(key))));
     if (failed.length) {
@@ -707,7 +735,7 @@ function PlaylistDialog({ source }: { source: AddDialogPlaylist }) {
             shown.length > 0 && (
               <Section title="Results">
                 {shown.map((row) => (
-                  <ChoiceRow key={row.key} row={row} on={isOn(row)} disabled={busy} onToggle={() => toggle(row)} />
+                  <ChoiceRow key={row.key} row={row} on={isOn(row)} disabled={busy || (row.liked && row.initial)} onToggle={() => toggle(row)} />
                 ))}
               </Section>
             )
@@ -716,14 +744,14 @@ function PlaylistDialog({ source }: { source: AddDialogPlaylist }) {
               {saved.length > 0 && (
                 <Section title="Saved in">
                   {saved.map((row) => (
-                    <ChoiceRow key={row.key} row={row} on={isOn(row)} disabled={busy} onToggle={() => toggle(row)} />
+                    <ChoiceRow key={row.key} row={row} on={isOn(row)} disabled={busy || (row.liked && row.initial)} onToggle={() => toggle(row)} />
                   ))}
                 </Section>
               )}
               {others.length > 0 && (
                 <Section title={saved.length > 0 ? 'Your playlists' : 'Playlists'}>
                   {others.map((row) => (
-                    <ChoiceRow key={row.key} row={row} on={isOn(row)} disabled={busy} onToggle={() => toggle(row)} />
+                    <ChoiceRow key={row.key} row={row} on={isOn(row)} disabled={busy || (row.liked && row.initial)} onToggle={() => toggle(row)} />
                   ))}
                 </Section>
               )}
@@ -750,7 +778,7 @@ function PlaylistDialog({ source }: { source: AddDialogPlaylist }) {
               disabled={busy}
               onClick={() => void apply()}
             >
-              {busy ? 'Saving…' : 'Done'}
+              {busy ? (progress ?? 'Saving…') : 'Done'}
             </button>
           )}
         </footer>

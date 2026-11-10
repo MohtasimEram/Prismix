@@ -4,15 +4,20 @@ import { useNavigate } from 'react-router';
 import { useSuggestions } from '@/data/music/queries';
 import type { MusicItem } from '@/data/music/types';
 import { Artwork } from './Artwork';
-import { hrefFor } from './links';
+import { artistHref, hrefFor } from './links';
 import { usePlayer } from '@/state/player';
+import { rememberSearchSongs, useRecentSearches } from '@/state/recentSearches';
 import { playTrack } from './play';
 
-type Option = { kind: 'query'; text: string; typed: string; rest: string } | { kind: 'item'; item: MusicItem };
+/** A row of the dropdown. [recent] rows are songs played after an earlier search, each forgotten by its id. */
+type Option =
+  | { kind: 'query'; text: string; typed: string; rest: string; recent?: undefined }
+  | { kind: 'item'; item: MusicItem; recent?: boolean };
 
 /**
- * The centred search field and its suggestions (report §6): a pill field, and
- * a glass dropdown of completions, then artist, album and song suggestions.
+ * The centred search field and its dropdown (report §6): a pill field, and a glass dropdown. Clicking the
+ * empty field lists the recent searches: the songs played after earlier searches, each with its cover, its
+ * artists and a play button, and a ✕ to forget it; typing lists completions, then artist, album and song suggestions.
  * Arrow keys move through it; Enter picks; Escape closes.
  */
 export function SearchField({ initial, onSearch }: { initial: string; onSearch: (query: string) => void }) {
@@ -23,14 +28,24 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
   const listId = useId();
   const navigate = useNavigate();
   const suggestions = useSuggestions(open ? value : '');
+  const recent = useRecentSearches((s) => s.recent);
+  const forget = useRecentSearches((s) => s.remove);
+  const clearRecent = useRecentSearches((s) => s.clear);
+  const typing = value.trim().length > 0;
 
   useEffect(() => setValue(initial), [initial]);
 
-  const options: Option[] = [
-    ...(suggestions.data?.queries ?? []).map((q) => ({ kind: 'query' as const, ...q })),
-    ...(suggestions.data?.items ?? []).map((item) => ({ kind: 'item' as const, item })),
-  ];
-  const showList = open && value.trim().length > 0 && options.length > 0;
+  // Songs shown here that get played are the ones noted as played after a search (state/recentSearches.ts).
+  useEffect(() => rememberSearchSongs(recent), [recent]);
+  useEffect(() => rememberSearchSongs(suggestions.data?.items ?? []), [suggestions.data]);
+
+  const options: Option[] = typing
+    ? [
+        ...(suggestions.data?.queries ?? []).map((q) => ({ kind: 'query' as const, ...q })),
+        ...(suggestions.data?.items ?? []).map((item) => ({ kind: 'item' as const, item })),
+      ]
+    : recent.map((item): Option => ({ kind: 'item', item, recent: true }));
+  const showList = open && options.length > 0;
 
   const pick = (option: Option | undefined) => {
     setOpen(false);
@@ -40,6 +55,7 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
       setValue(option.text);
       return onSearch(option.text);
     }
+    // A song that is played is remembered by playTrack, to be listed under Recent searches next time.
     const href = hrefFor(option.item);
     if (href) navigate(href);
     else playTrack(option.item);
@@ -75,6 +91,7 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
             setActive(-1);
           }}
           onFocus={() => setOpen(true)}
+          onClick={() => setOpen(true)}
           onBlur={() => setTimeout(() => setOpen(false), 120)}
           onKeyDown={(e) => {
             if (e.key === 'ArrowDown') {
@@ -103,19 +120,24 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
         )}
       </form>
       {showList && (
-        // The dropdown: 302px of glass, 3px under the field.
+        // The dropdown: glass, 3px under the field. Suggestions are 302px wide; the recent searches fill the field's width.
         <ul
           id={listId}
-          className="absolute top-[calc(100%+3px)] left-0 z-(--z-contextual-menus) max-h-[min(700px,70vh)] w-[302px] overflow-y-auto rounded-[9px] border border-[#00000033] bg-thick-material py-1.5 shadow-[inset_0_0_0_1px_#ffffff33,0_8px_40px_#0000008c] [backdrop-filter:blur(60px)_saturate(2.2)]"
+          className={`absolute top-[calc(100%+3px)] left-0 z-(--z-contextual-menus) max-h-[min(700px,70vh)] overflow-y-auto rounded-[9px] border border-[#00000033] bg-thick-material py-1.5 shadow-[inset_0_0_0_1px_#ffffff33,0_8px_40px_#0000008c] [backdrop-filter:blur(60px)_saturate(2.2)] ${typing ? 'w-[302px]' : 'w-full'}`}
           role="listbox"
         >
+          {!typing && (
+            <li role="presentation" className="px-3.5 pt-1.5 pb-0.5 type-title-3-emphasized text-primary">
+              Recent searches
+            </li>
+          )}
           {options.map((option, i) => (
             <li
-              key={option.kind === 'query' ? `q-${option.text}` : `i-${option.item.id}`}
+              key={option.kind === 'query' ? `q-${option.text}` : `${option.recent ? 'r' : 'i'}-${option.item.id}`}
               id={`${listId}-${i}`}
               role="option"
               aria-selected={i === active}
-              className={option.kind === 'query' ? hint : lockup}
+              className={`${option.kind === 'query' ? hint : lockup}${option.recent ? ' relative pe-9' : ''}`}
               data-active={i === active || undefined}
               onMouseDown={(e) => e.preventDefault()}
               onMouseEnter={() => setActive(i)}
@@ -142,12 +164,52 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
                   </div>
                   <div className="flex min-w-0 flex-col">
                     <span className="truncate type-body">{option.item.title}</span>
-                    <span className="mt-px truncate type-callout text-secondary">{option.item.subtitle || kindLabel(option.item.kind)}</span>
+                    <span className="mt-px truncate type-callout text-secondary">
+                      {option.recent ? (
+                        <RecentArtists
+                          item={option.item}
+                          onOpen={(href) => {
+                            setOpen(false);
+                            setActive(-1);
+                            navigate(href);
+                          }}
+                        />
+                      ) : (
+                        option.item.subtitle || kindLabel(option.item.kind)
+                      )}
+                    </span>
                   </div>
                 </>
               )}
+              {option.recent && option.kind === 'item' && (
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  className="absolute top-1/2 right-2 grid size-6 -translate-y-1/2 place-items-center rounded-full text-secondary opacity-0 transition-opacity duration-100 group-data-active/option:opacity-100 hover:bg-quaternary hover:text-primary"
+                  aria-label={`Remove ${option.kind === 'item' ? option.item.title : ''} from recent searches`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (option.kind === 'item') forget(option.item.id);
+                  }}
+                >
+                  <X size={13} strokeWidth={2.4} />
+                </button>
+              )}
             </li>
           ))}
+          {!typing && (
+            <li role="presentation" className="mx-1.5 mt-1.5 px-1.5">
+              <button
+                type="button"
+                tabIndex={-1}
+                className="rounded-[6px] px-2 py-1 type-callout-emphasized text-secondary hover:bg-quaternary hover:text-primary"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={clearRecent}
+              >
+                Clear recent searches
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </div>
@@ -182,6 +244,39 @@ function PlayBadge({ item }: { item: MusicItem }) {
     >
       <Icon size={18} fill="currentColor" strokeWidth={0} className="text-white" aria-hidden="true" />
     </button>
+  );
+}
+
+/** The second line of a recent song: its artists, each opening that artist's page when YouTube links it; YouTube's own line when it names none. */
+function RecentArtists({ item, onOpen }: { item: MusicItem; onOpen: (href: string) => void }) {
+  if (!item.artists.length) return <>{item.subtitle.trim() || kindLabel(item.kind)}</>;
+  return (
+    <>
+      {item.artists.map((artist, i) => {
+        const href = artistHref(artist.id);
+        return (
+          <span key={`${artist.id ?? ''}${artist.name}${i}`}>
+            {i > 0 && ', '}
+            {href ? (
+              <button
+                type="button"
+                tabIndex={-1}
+                className="cursor-pointer rounded-[3px] text-secondary hover:text-primary hover:underline"
+                onClick={(e) => {
+                  // Opens the artist, not the song: the row's own click would play it.
+                  e.stopPropagation();
+                  onOpen(href);
+                }}
+              >
+                {artist.name}
+              </button>
+            ) : (
+              artist.name
+            )}
+          </span>
+        );
+      })}
+    </>
   );
 }
 
