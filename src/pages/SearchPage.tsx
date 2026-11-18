@@ -1,7 +1,7 @@
 import { Play } from 'lucide-react';
 import { useEffect } from 'react';
 import { useSearchParams } from 'react-router';
-import { forgetSearchSongs, rememberSearchSongs } from '@/state/recentSearches';
+import { forgetSearchItems, rememberSearchItems, noteItemSelected } from '@/state/recentSearches';
 import { PrefetchLink } from '@/components/PrefetchLink';
 import { Artwork } from '@/components/music/Artwork';
 import { CategoryTiles } from '@/components/music/CategoryTiles';
@@ -115,11 +115,17 @@ function TopResult({ item }: { item: MusicItem }) {
     </>
   );
   return href ? (
-    <PrefetchLink to={href} className={top}>
+    <PrefetchLink to={href} className={top} onClick={() => noteItemSelected(item.id)}>
       {body}
     </PrefetchLink>
   ) : (
-    <button className={top} onClick={() => playTrack(item)}>
+    <button
+      className={top}
+      onClick={() => {
+        noteItemSelected(item.id);
+        playTrack(item);
+      }}
+    >
       {body}
     </button>
   );
@@ -152,10 +158,19 @@ function Results({ query }: { query: string }) {
   const search = useSearch(query);
   const [params, setParams] = useSearchParams();
   const requested = params.get('tab');
-  // The songs on show: one that gets played from here is listed under Recent searches (state/recentSearches.ts).
+  // Items on show: one that gets selected or played from here is listed under Recent searches (state/recentSearches.ts).
   const found = search.data;
   useEffect(() => {
-    if (found) rememberSearchSongs([...found.top, ...found.songs, ...found.videos]);
+    if (found) {
+      rememberSearchItems([
+        ...found.top,
+        ...found.songs,
+        ...found.videos,
+        ...found.albums,
+        ...found.artists,
+        ...found.playlists,
+      ]);
+    }
   }, [found]);
   if (search.isError) return <LoadError error={search.error} onRetry={() => void search.refetch()} />;
   if (!search.data) return <ResultsSkeleton />;
@@ -246,8 +261,8 @@ export default function SearchPage() {
     const trimmed = q.trim();
     setParams(trimmed ? { q: trimmed } : {});
   };
-  // Leaving the page, what it showed no longer counts as played from a search.
-  useEffect(() => forgetSearchSongs, []);
+  // Leaving the page, what it showed no longer counts as selected from a search.
+  useEffect(() => forgetSearchItems, []);
 
   return (
     <>

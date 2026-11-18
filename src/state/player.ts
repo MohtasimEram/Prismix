@@ -70,6 +70,8 @@ interface PlayerState extends Settings {
    * for the audio element's clock.
    */
   resumeAt: number;
+  /** True while AutoPlay radio refill is actively in flight. */
+  refillingAutoplay: boolean;
 
   /** Plays [tracks] as the context (an album, a playlist), from [startIndex]. */
   playTracks: (tracks: Track[], startIndex: number, source: QueueSource) => void;
@@ -242,6 +244,7 @@ export const usePlayer = create<PlayerState>()((set, get) => ({
   error: null,
   deck: 0,
   resumeAt: 0,
+  refillingAutoplay: false,
 
   playTracks(tracks, startIndex, source) {
     if (!tracks.length) return;
@@ -418,7 +421,7 @@ export const usePlayer = create<PlayerState>()((set, get) => ({
   },
 
   setAutoplay(autoplay) {
-    set({ autoplay });
+    set({ autoplay, ...(autoplay ? {} : { refillingAutoplay: false }) });
     saveSettings(get());
     if (autoplay) void refillAutoplay(true);
     else {
@@ -507,6 +510,7 @@ async function startAt(at: number, { startSec = 0, auto = false, autoplay = true
 
   usePlayer.setState({ index: at, nowPlaying: hintOf(entry.track), status: 'loading', error: null, resumeAt: 0 });
   updateMediaSession(usePlayer.getState().nowPlaying);
+  void refillAutoplay();
   try {
     const all = await getDecks();
     const deck = all[active]!;
@@ -613,16 +617,29 @@ const exhaustedSeeds = new Set<string>();
 
 function refillAutoplay(force = false): Promise<void> {
   const { autoplay, repeat, queue, index } = usePlayer.getState();
-  if (!autoplay || repeat !== 'off' || index < 0) return Promise.resolve();
+  if (!autoplay || repeat !== 'off' || index < 0) {
+    if (usePlayer.getState().refillingAutoplay) usePlayer.setState({ refillingAutoplay: false });
+    return Promise.resolve();
+  }
   // A party's AutoPlay goes through the server (party/partySync.ts), never straight onto this queue.
-  if (partyHooks?.inParty()) return Promise.resolve();
+  if (partyHooks?.inParty()) {
+    if (usePlayer.getState().refillingAutoplay) usePlayer.setState({ refillingAutoplay: false });
+    return Promise.resolve();
+  }
   const needed = MAX_QUEUED_AUTOPLAY - queue.slice(index + 1).filter((e) => e.tier === 'autoplay').length;
-  if (needed <= 0) return Promise.resolve();
+  if (needed <= 0) {
+    if (usePlayer.getState().refillingAutoplay) usePlayer.setState({ refillingAutoplay: false });
+    return Promise.resolve();
+  }
   // Seeded from the playing track (loadAutoplayForCurrentTrack), not the queue's tail.
   const seed = queue[index]?.track;
-  if (!seed || exhaustedSeeds.has(seed.videoId)) return Promise.resolve();
-  if (!force && autoplaySeed === seed.videoId) return Promise.resolve();
+  if (!seed || exhaustedSeeds.has(seed.videoId)) {
+    if (usePlayer.getState().refillingAutoplay) usePlayer.setState({ refillingAutoplay: false });
+    return Promise.resolve();
+  }
+  if (!force && autoplaySeed === seed.videoId) return refilling ?? Promise.resolve();
   autoplaySeed = seed.videoId;
+  usePlayer.setState({ refillingAutoplay: true });
   refilling ??= (async () => {
     try {
       const { fetchRadio } = await import('@/data/music/api');
@@ -650,6 +667,7 @@ function refillAutoplay(force = false): Promise<void> {
       autoplaySeed = null;
     } finally {
       refilling = null;
+      usePlayer.setState({ refillingAutoplay: false });
     }
   })();
   return refilling;

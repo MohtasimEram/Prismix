@@ -26,11 +26,18 @@ export function albumHref(id: string | null): string | null {
   return id ? `/album/${encodeURIComponent(id)}` : null;
 }
 
-/** See All and mood/genre pages. Playlists open as playlists. */
+/** See All and mood/genre pages. Playlists open as playlists; new releases open as /new. */
 export function browseHref(link: BrowseLink): string {
   if (link.browseId.startsWith('VL')) return `/playlist/${encodeURIComponent(link.browseId)}`;
   if (link.browseId.startsWith('MPREb_')) return `/album/${encodeURIComponent(link.browseId)}`;
   if (link.browseId.startsWith('UC')) return `/artist/${encodeURIComponent(link.browseId)}`;
+  if (
+    link.browseId === 'FEmusic_new_releases_albums' ||
+    link.browseId === 'FEmusic_new_releases' ||
+    link.browseId === 'FEmusic_explore'
+  ) {
+    return '/new';
+  }
   const query = link.params ? `?params=${encodeURIComponent(link.params)}` : '';
   return `/browse/${encodeURIComponent(link.browseId)}${query}`;
 }

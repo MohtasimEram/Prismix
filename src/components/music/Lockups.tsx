@@ -3,6 +3,7 @@ import { PauseIcon, PlayIcon } from '@/components/icons/Transport';
 import type { MusicItem, Track } from '@/data/music/types';
 import { usePlayer } from '@/state/player';
 import { trackDragProps } from '@/state/dragTrack';
+import { noteItemSelected } from '@/state/recentSearches';
 import { Artwork } from './Artwork';
 import { ExplicitBadge } from './ExplicitBadge';
 import { artistHref, hrefFor } from './links';
@@ -47,7 +48,7 @@ function Byline({ item }: { item: MusicItem }) {
           <span key={`${artist.name}-${i}`}>
             {i > 0 && ', '}
             {href ? (
-              <PrefetchLink to={href} className="hover:underline">
+              <PrefetchLink to={href} className="hover:underline" onClick={() => noteItemSelected(item.id)}>
                 {artist.name}
               </PrefetchLink>
             ) : (
@@ -113,7 +114,7 @@ function LockupArtwork({ item, width, aspect }: { item: MusicItem; width: number
     <div className="group/art relative rounded-artwork-md">
       <Artwork src={item.thumbnail} displayWidth={width} aspect={aspect} radius="var(--radius-artwork-medium)" />
       {href ? (
-        <PrefetchLink to={href} className={overlayLink} aria-label={item.title} />
+        <PrefetchLink to={href} className={overlayLink} aria-label={item.title} onClick={() => noteItemSelected(item.id)} />
       ) : (
         <button className={overlayLink} aria-label={`Play ${item.title}`} onClick={() => toggleOrPlay(current, item)} />
       )}
@@ -173,7 +174,7 @@ export function VideoLockup({ item, width = 300 }: { item: MusicItem; width?: nu
 /** Circular artist lockup (report §2, type H). */
 export function CircleLockup({ item, width = 160 }: { item: MusicItem; width?: number }) {
   return (
-    <PrefetchLink to={hrefFor(item) ?? '#'} className="group/circle flex min-w-0 flex-col items-center gap-2.5">
+    <PrefetchLink to={hrefFor(item) ?? '#'} className="group/circle flex min-w-0 flex-col items-center gap-2.5" onClick={() => noteItemSelected(item.id)}>
       <Artwork src={item.thumbnail} displayWidth={width} radius="50%" />
       <span className="max-w-full truncate text-center type-body group-hover/circle:underline">{item.title}</span>
     </PrefetchLink>

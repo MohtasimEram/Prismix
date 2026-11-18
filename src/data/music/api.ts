@@ -10,6 +10,7 @@ import {
   mapBrowse,
   mapCategories,
   mapHome,
+  mapItem,
   mapPlaylist,
   mapPlaylistTracks,
   mapSearch,
@@ -66,10 +67,67 @@ export async function fetchHome(): Promise<Paged<Shelf[]>> {
   return homePage(await yt.music.getHomeFeed());
 }
 
-/** The New page: YouTube Music's Explore, minus its podcast and mood carousels (mappers drop those). */
+/** The New page: YouTube Music's Explore and New Releases. */
 export async function fetchExplore(): Promise<Shelf[]> {
   const yt = await getMusicClient();
-  return mapShelves((await yt.music.getExplore()).sections);
+  const shelves: Shelf[] = [];
+
+  // 1. Fetch Explore feed
+  try {
+    const explore = await yt.music.getExplore();
+    shelves.push(...mapShelves(explore.sections));
+  } catch {
+    try {
+      const { YTNodes } = await import('youtubei.js/web');
+      const res = await yt.actions.execute('/browse', { browseId: 'FEmusic_explore', client: 'YTMUSIC', parse: true });
+      const memo = res.contents_memo;
+      const sections = memo?.getType(YTNodes.MusicCarouselShelf) ?? [];
+      shelves.push(...mapShelves(sections));
+    } catch {
+      // Ignore
+    }
+  }
+
+  // 2. Fetch FEmusic_new_releases for additional new release shelves
+  try {
+    const { YTNodes } = await import('youtubei.js/web');
+    const res = await yt.actions.execute('/browse', { browseId: 'FEmusic_new_releases', client: 'YTMUSIC', parse: true });
+    const memo = res.contents_memo;
+    const carousels = memo?.getType(YTNodes.MusicCarouselShelf) ?? [];
+    for (const shelf of mapShelves(carousels)) {
+      const isVideo = /video/i.test(shelf.title);
+      if (isVideo && shelves.some((s) => /video/i.test(s.title))) continue;
+      if (!shelves.some((s) => s.title.toLowerCase() === shelf.title.toLowerCase())) {
+        shelves.push(shelf);
+      }
+    }
+  } catch {
+    // Ignore
+  }
+
+  // 3. Ensure a primary New Releases shelf with the latest official releases
+  if (!shelves.some((s) => /new releases|new albums/i.test(s.title))) {
+    try {
+      const playlist = await yt.music.getPlaylist('VLRDCLAK5uy_ksEjgm3H_7zOJ_RHzRjN1wY-_FFcs7aAU');
+      const items = (playlist.items ?? [])
+        .map(mapItem)
+        .filter((i): i is MusicItem => !!i)
+        .slice(0, 20);
+      if (items.length > 0) {
+        shelves.unshift({
+          title: 'New Releases',
+          strapline: 'The hottest new songs this week',
+          layout: 'tracks',
+          items,
+          seeAll: { browseId: 'VLRDCLAK5uy_ksEjgm3H_7zOJ_RHzRjN1wY-_FFcs7aAU', params: null },
+        });
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  return shelves;
 }
 
 /** Moods & genres, read raw because YouTube.js drops the tiles' colours. */
@@ -177,23 +235,51 @@ export async function fetchPlaylist(id: string): Promise<{ page: PlaylistPage; m
 
 /** See All, moods and genres: whatever the browse id renders as. */
 export async function fetchBrowse({ browseId, params }: BrowseLink): Promise<BrowsePage> {
+  if (
+    browseId === 'FEmusic_new_releases_albums' ||
+    browseId === 'FEmusic_new_releases' ||
+    browseId === 'FEmusic_explore'
+  ) {
+    const shelves = await fetchExplore();
+    return {
+      title: 'New Releases',
+      shelves,
+      grid: [],
+      tracks: [],
+    };
+  }
+
   const yt = await getMusicClient();
   const { YTNodes } = await import('youtubei.js/web');
-  const response = await yt.actions.execute('/browse', {
-    browseId,
-    ...(params && { params }),
-    client: 'YTMUSIC',
-    parse: true,
-  });
-  const memo = response.contents_memo;
-  const sections = [
-    ...(memo?.getType(YTNodes.Grid) ?? []),
-    ...(memo?.getType(YTNodes.MusicCarouselShelf) ?? []),
-    ...(memo?.getType(YTNodes.MusicShelf) ?? []),
-    ...(memo?.getType(YTNodes.MusicPlaylistShelf) ?? []),
-  ];
-  const header = memo?.getType(YTNodes.MusicHeader)?.[0] ?? (response.header as unknown);
-  return mapBrowse({ header, sections }, '');
+  try {
+    const response = await yt.actions.execute('/browse', {
+      browseId,
+      ...(params && { params }),
+      client: 'YTMUSIC',
+      parse: true,
+    });
+    const memo = response.contents_memo;
+    const sections = [
+      ...(memo?.getType(YTNodes.Grid) ?? []),
+      ...(memo?.getType(YTNodes.MusicCarouselShelf) ?? []),
+      ...(memo?.getType(YTNodes.MusicShelf) ?? []),
+      ...(memo?.getType(YTNodes.MusicPlaylistShelf) ?? []),
+    ];
+    const header = memo?.getType(YTNodes.MusicHeader)?.[0] ?? (response.header as unknown);
+    return mapBrowse({ header, sections }, '');
+  } catch (err) {
+    // If a new releases sub-browse fails (e.g. 404 from YouTube's deprecated browseIds), fall back to explore
+    if (/new_release|explore/i.test(browseId)) {
+      const shelves = await fetchExplore();
+      return {
+        title: 'New Releases',
+        shelves,
+        grid: [],
+        tracks: [],
+      };
+    }
+    throw err;
+  }
 }
 
 // ---- Signed in (prompt §5.3) ------------------------------------------------------
@@ -704,7 +790,7 @@ function panelCandidate(raw: Raw): Candidate | null {
     track: {
       videoId: item.video_id,
       title: item.title?.toString() ?? '',
-      artists: (item.artists ?? []).map((a) => ({ name: a.name, id: a.channel_id ?? null })),
+      artists: (item.artists ?? []).map((a) => ({ name: a.name, id: a.channel_id ?? (a as { id?: string }).id ?? null })),
       album: item.album ? { name: item.album.name, id: item.album.id ?? null } : null,
       durationSec: item.duration?.seconds || null,
       explicit: (item.badges ?? []).some((b) => /explicit/i.test(JSON.stringify(b))),

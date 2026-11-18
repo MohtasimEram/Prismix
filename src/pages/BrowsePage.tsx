@@ -46,7 +46,7 @@ export default function BrowsePage() {
           <TrackList tracks={page.tracks} variant="playlist" source={{ title, type: 'other', id: browseId }} />
         </div>
       )}
-      {!page.grid.length && <Shelves shelves={page.shelves} />}
+      {page.shelves.length > 0 && <Shelves shelves={page.shelves} />}
     </>
   );
 }

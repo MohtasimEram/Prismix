@@ -127,11 +127,11 @@ export function useYouTubeReady(): { ready: boolean; missing: boolean } {
 
 export function useAlbum(id: string) {
   const { ready } = useYouTubeReady();
-  return useQuery({ ...albumQuery(id), enabled: ready });
+  return useQuery({ ...albumQuery(id), enabled: ready && !!id });
 }
 export function useArtist(id: string) {
   const { ready } = useYouTubeReady();
-  return useQuery({ ...artistQuery(id), enabled: ready });
+  return useQuery({ ...artistQuery(id), enabled: ready && !!id });
 }
 export function useExplore() {
   const { ready } = useYouTubeReady();
@@ -184,7 +184,7 @@ export function useHome() {
 }
 export function usePlaylist(id: string) {
   const { ready } = useYouTubeReady();
-  return useInfiniteQuery({ ...playlistQuery(id), enabled: ready });
+  return useInfiniteQuery({ ...playlistQuery(id), enabled: ready && !!id });
 }
 
 /** Typeahead: debounced, and anonymous like the app's (Innertube.searchTypeahead). */

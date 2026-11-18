@@ -3,16 +3,12 @@ import type { MusicItem } from '@/data/music/types';
 
 /**
  * Recent searches, newest first, kept across runs; listed under the search field when it is clicked.
- * The list is the songs (and videos) that were played after a search, whether from the suggestions or
- * from the results, each kept whole so it can be listed with its cover and artists and played again.
- * Phrases that were searched for, and albums, artists or playlists that were opened, are not kept.
+ * Tracks songs, videos, albums, artists, and playlists that were played or opened after a search,
+ * Spotify-style, each kept whole with its cover, type, and details.
  */
 
 const KEY = 'prismix:recent-searches';
 const MAX = 12;
-
-/** Only songs and videos are listed: they are what plays. */
-const isSong = (item: MusicItem): boolean => item.kind === 'song' || item.kind === 'video';
 
 function isItem(value: unknown): value is MusicItem {
   const v = value as Partial<MusicItem> | null;
@@ -26,10 +22,10 @@ function load(): MusicItem[] {
     const seen = new Set<string>();
     const items: MusicItem[] = [];
     for (const value of raw) {
-      // Earlier versions kept phrases and wrapped items as { type: 'item', item }: the phrases go, the songs stay.
+      // Earlier versions kept phrases and wrapped items as { type: 'item', item }.
       const entry = value as { type?: unknown; item?: unknown } | null;
       const item = entry && typeof entry === 'object' && entry.type === 'item' ? entry.item : value;
-      if (!isItem(item) || !isSong(item) || seen.has(item.id)) continue;
+      if (!isItem(item) || seen.has(item.id)) continue;
       seen.add(item.id);
       items.push(item);
     }
@@ -49,22 +45,27 @@ function save(list: MusicItem[]): void {
 
 interface RecentState {
   recent: MusicItem[];
-  /** Notes a song that was played after a search. */
+  /** Notes an item that was selected or played after a search. */
+  addItem: (item: MusicItem) => void;
+  /** Backward-compatible alias for addItem. */
   addSong: (item: MusicItem) => void;
-  /** Forgets one song, by its id. */
+  /** Forgets one item, by its id. */
   remove: (id: string) => void;
   clear: () => void;
 }
 
-export const useRecentSearches = create<RecentState>()((set) => ({
+export const useRecentSearches = create<RecentState>()((set, get) => ({
   recent: load(),
-  addSong: (item) => {
-    if (!isItem(item) || !isSong(item)) return;
+  addItem: (item) => {
+    if (!isItem(item)) return;
     set((s) => {
       const recent = [item, ...s.recent.filter((e) => e.id !== item.id)].slice(0, MAX);
       save(recent);
       return { recent };
     });
+  },
+  addSong: (item) => {
+    get().addItem(item);
   },
   remove: (id) =>
     set((s) => {
@@ -79,28 +80,37 @@ export const useRecentSearches = create<RecentState>()((set) => ({
 }));
 
 /**
- * The songs the search page is showing right now (suggestions, results, the recent list), by video id.
- * A song that starts playing and is in here was played from a search; one that isn't (a playlist played
- * from the sidebar while the page is open) is not. The page empties it when it closes.
+ * The items the search page is showing right now (suggestions, results, the recent list), by id.
+ * An item that gets opened or played from here was chosen from a search.
+ * The page empties it when it closes.
  */
 const shown = new Map<string, MusicItem>();
 const MAX_SHOWN = 400;
 
-export function rememberSearchSongs(items: readonly MusicItem[]): void {
+export function rememberSearchItems(items: readonly MusicItem[]): void {
   for (const item of items) {
-    if (!isItem(item) || !isSong(item)) continue;
+    if (!isItem(item)) continue;
     shown.delete(item.id);
     shown.set(item.id, item);
     if (shown.size > MAX_SHOWN) shown.delete(shown.keys().next().value!);
   }
 }
 
-export function forgetSearchSongs(): void {
+/** Backward-compatible alias. */
+export const rememberSearchSongs = rememberSearchItems;
+
+export function forgetSearchItems(): void {
   shown.clear();
 }
 
-/** A song was played on purpose (a click on it, not the queue moving on): kept if it came from the search page. */
-export function noteSongPlayed(videoId: string | undefined): void {
-  const item = videoId ? shown.get(videoId) : undefined;
-  if (item) useRecentSearches.getState().addSong(item);
+/** Backward-compatible alias. */
+export const forgetSearchSongs = forgetSearchItems;
+
+/** An item was chosen on purpose from the search page: kept in recent searches. */
+export function noteItemSelected(id: string | undefined): void {
+  const item = id ? shown.get(id) : undefined;
+  if (item) useRecentSearches.getState().addItem(item);
 }
+
+/** Backward-compatible alias for noteItemSelected. */
+export const noteSongPlayed = noteItemSelected;

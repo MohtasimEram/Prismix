@@ -5,41 +5,35 @@ type OpenPanel = Exclude<SidePanel, null>;
 
 const PANEL_KEY = 'prismix:side-panel';
 const HIDDEN_KEY = 'prismix:now-playing-hidden';
-const PANELS: readonly OpenPanel[] = ['up-next', 'lyrics', 'now-playing'];
 
-/** The panel that was open when the app was last closed (none if it was closed, or the window is too narrow to hold one). */
+/** Default to Now Playing on launch (none if window is too narrow to hold one). */
 function restoredPanel(): SidePanel {
   try {
     // Below 640px the panel is full-width: starting with one open would hide the app.
     if (typeof window !== 'undefined' && window.innerWidth < 640) return null;
-    const stored = localStorage.getItem(PANEL_KEY);
-    return PANELS.find((panel) => panel === stored) ?? null;
+    return 'now-playing';
   } catch {
-    return null;
+    return 'now-playing';
   }
 }
 
-/** Whether Now Playing was hidden by the listener (it then stays a strip at the window's edge, and doesn't reopen by itself). */
+/** Now Playing starts visible on launch. */
 function restoredHidden(): boolean {
-  try {
-    return localStorage.getItem(HIDDEN_KEY) === '1';
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 interface UiState {
-  /** The right-hand glass panel (report §7); one of Now Playing, Up Next or Lyrics at a time. Remembered across runs. */
+  /** The right-hand glass panel (report §7); one of Now Playing, Up Next or Lyrics at a time. */
   sidePanel: SidePanel;
   toggleSidePanel: (panel: OpenPanel) => void;
   setSidePanel: (panel: SidePanel) => void;
   /** Opens Lyrics or Up Next from Now Playing; closing that panel then comes back to Now Playing. */
   openFromNowPlaying: (panel: OpenPanel) => void;
-  /** Closes the panel, or steps back to Now Playing when it was opened from there. */
+  /** Closes the panel, always stepping back to Now Playing. */
   closeSidePanel: () => void;
   /** Set while Lyrics or Up Next was opened from Now Playing. */
   returnToNowPlaying: boolean;
-  /** Now Playing hidden on purpose: no panel opens by itself when a song starts, until Now Playing is opened again. Remembered across runs. */
+  /** Now Playing hidden on purpose: no panel opens by itself when a song starts, until Now Playing is opened again. */
   nowPlayingHidden: boolean;
   /** Hides the Now Playing panel, leaving its strip at the window's edge. */
   hideNowPlaying: () => void;
@@ -55,29 +49,45 @@ export const useUi = create<UiState>()((set, get) => ({
   sidePanel: restoredPanel(),
   returnToNowPlaying: false,
   nowPlayingHidden: restoredHidden(),
-  hideNowPlaying: () => set({ sidePanel: get().sidePanel === 'now-playing' ? null : get().sidePanel, returnToNowPlaying: false, nowPlayingHidden: true }),
-  // Moving from Now Playing to Lyrics or Up Next (by any button) remembers to step back to it on close.
+  hideNowPlaying: () =>
+    set({
+      sidePanel: get().sidePanel === 'now-playing' ? null : get().sidePanel,
+      returnToNowPlaying: false,
+      nowPlayingHidden: true,
+    }),
+  // Moving between panels; closing Up Next or Lyrics always returns to Now Playing.
   toggleSidePanel: (panel) => {
     const { sidePanel } = get();
-    if (sidePanel === panel) get().closeSidePanel();
-    else set({ sidePanel: panel, returnToNowPlaying: sidePanel === 'now-playing' && panel !== 'now-playing', ...(panel === 'now-playing' && { nowPlayingHidden: false }) });
+    if (sidePanel === panel) {
+      get().closeSidePanel();
+    } else {
+      set({
+        sidePanel: panel,
+        returnToNowPlaying: true,
+        ...(panel === 'now-playing' && { nowPlayingHidden: false }),
+      });
+    }
   },
   setSidePanel: (panel) =>
     set({
       sidePanel: panel,
-      returnToNowPlaying: get().sidePanel === 'now-playing' && panel !== null && panel !== 'now-playing',
-      // Showing Now Playing again ends "hidden".
+      returnToNowPlaying: panel !== null && panel !== 'now-playing',
       ...(panel === 'now-playing' && { nowPlayingHidden: false }),
     }),
   openFromNowPlaying: (panel) => set({ sidePanel: panel, returnToNowPlaying: true }),
-  closeSidePanel: () => set({ sidePanel: get().returnToNowPlaying ? 'now-playing' : null, returnToNowPlaying: false }),
+  closeSidePanel: () =>
+    set({
+      sidePanel: typeof window !== 'undefined' && window.innerWidth < 640 ? null : 'now-playing',
+      returnToNowPlaying: false,
+      nowPlayingHidden: false,
+    }),
   fullScreen: false,
   setFullScreen: (fullScreen) => set({ fullScreen }),
   drawerOpen: false,
   setDrawerOpen: (drawerOpen) => set({ drawerOpen }),
 }));
 
-// Which panel is open is kept, so the app comes back as it was left.
+// Keep state updated for session persistence if needed.
 useUi.subscribe((state, previous) => {
   try {
     if (state.sidePanel !== previous.sidePanel) localStorage.setItem(PANEL_KEY, state.sidePanel ?? 'none');

@@ -6,7 +6,7 @@ const item = (id: string, kind: MusicItem['kind'] = 'song'): MusicItem => ({
   kind,
   id,
   title: id,
-  subtitle: 'Song • Someone',
+  subtitle: `${kind} • Someone`,
   artists: [{ name: 'Someone', id: null }],
   album: null,
   thumbnail: null,
@@ -26,21 +26,21 @@ async function store(stored?: unknown) {
 describe('recent searches', () => {
   it('keeps songs, newest first, each once', async () => {
     const { useRecentSearches: recent } = await store();
-    recent.getState().addSong(item('a'));
-    recent.getState().addSong(item('b'));
-    recent.getState().addSong(item('a'));
+    recent.getState().addItem(item('a'));
+    recent.getState().addItem(item('b'));
+    recent.getState().addItem(item('a'));
     expect(recent.getState().recent.map((e) => e.id)).toEqual(['a', 'b']);
   });
 
-  it('keeps only songs and videos', async () => {
+  it('keeps songs, videos, albums, and artists', async () => {
     const { useRecentSearches: recent } = await store();
-    recent.getState().addSong(item('album', 'album'));
-    recent.getState().addSong(item('artist', 'artist'));
-    recent.getState().addSong(item('video', 'video'));
-    expect(recent.getState().recent.map((e) => e.id)).toEqual(['video']);
+    recent.getState().addItem(item('album', 'album'));
+    recent.getState().addItem(item('artist', 'artist'));
+    recent.getState().addItem(item('video', 'video'));
+    expect(recent.getState().recent.map((e) => e.id)).toEqual(['video', 'artist', 'album']);
   });
 
-  it('reads earlier lists, dropping the phrases and the pages', async () => {
+  it('reads earlier lists, dropping phrases and invalid items while keeping music items', async () => {
     const { useRecentSearches: recent } = await store([
       'a phrase',
       { type: 'query', text: 'arijit' },
@@ -51,13 +51,13 @@ describe('recent searches', () => {
       null,
       { type: 'item', item: { nope: true } },
     ]);
-    expect(recent.getState().recent.map((e) => e.id)).toEqual(['s1', 's2']);
+    expect(recent.getState().recent.map((e) => e.id)).toEqual(['s1', 'al', 's2']);
   });
 
-  it('forgets one song by its id, or all of them', async () => {
+  it('forgets one item by its id, or all of them', async () => {
     const { useRecentSearches: recent } = await store();
-    recent.getState().addSong(item('a'));
-    recent.getState().addSong(item('b'));
+    recent.getState().addItem(item('a'));
+    recent.getState().addItem(item('b'));
     recent.getState().remove('a');
     expect(recent.getState().recent.map((e) => e.id)).toEqual(['b']);
     recent.getState().clear();
@@ -66,20 +66,20 @@ describe('recent searches', () => {
 
   it('keeps at most twelve', async () => {
     const { useRecentSearches: recent } = await store();
-    for (let i = 0; i < 15; i++) recent.getState().addSong(item(`s${i}`));
+    for (let i = 0; i < 15; i++) recent.getState().addItem(item(`s${i}`));
     expect(recent.getState().recent).toHaveLength(12);
   });
 
-  it('notes a played song only while the search page shows it', async () => {
-    const { useRecentSearches: recent, rememberSearchSongs, forgetSearchSongs, noteSongPlayed } = await store();
-    noteSongPlayed('a');
+  it('notes a selected item only while the search page shows it', async () => {
+    const { useRecentSearches: recent, rememberSearchItems, forgetSearchItems, noteItemSelected } = await store();
+    noteItemSelected('a');
     expect(recent.getState().recent).toEqual([]);
-    rememberSearchSongs([item('a')]);
-    noteSongPlayed('a');
-    noteSongPlayed('other');
+    rememberSearchItems([item('a', 'album')]);
+    noteItemSelected('a');
+    noteItemSelected('other');
     expect(recent.getState().recent.map((e) => e.id)).toEqual(['a']);
-    forgetSearchSongs();
-    noteSongPlayed('a');
+    forgetSearchItems();
+    noteItemSelected('a');
     expect(recent.getState().recent).toHaveLength(1);
   });
 });

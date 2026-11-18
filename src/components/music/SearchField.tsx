@@ -6,18 +6,18 @@ import type { MusicItem } from '@/data/music/types';
 import { Artwork } from './Artwork';
 import { artistHref, hrefFor } from './links';
 import { usePlayer } from '@/state/player';
-import { rememberSearchSongs, useRecentSearches } from '@/state/recentSearches';
+import { rememberSearchItems, useRecentSearches } from '@/state/recentSearches';
 import { playTrack } from './play';
 
-/** A row of the dropdown. [recent] rows are songs played after an earlier search, each forgotten by its id. */
+/** A row of the dropdown. [recent] rows are items played or opened after an earlier search, each forgotten by its id. */
 type Option =
   | { kind: 'query'; text: string; typed: string; rest: string; recent?: undefined }
   | { kind: 'item'; item: MusicItem; recent?: boolean };
 
 /**
  * The centred search field and its dropdown (report §6): a pill field, and a glass dropdown. Clicking the
- * empty field lists the recent searches: the songs played after earlier searches, each with its cover, its
- * artists and a play button, and a ✕ to forget it; typing lists completions, then artist, album and song suggestions.
+ * empty field lists the recent searches: songs, albums, artists and playlists played or opened after earlier searches,
+ * each with its cover, type, artists and a play button, and a ✕ to forget it; typing lists completions, then artist, album and song suggestions.
  * Arrow keys move through it; Enter picks; Escape closes.
  */
 export function SearchField({ initial, onSearch }: { initial: string; onSearch: (query: string) => void }) {
@@ -35,9 +35,9 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
 
   useEffect(() => setValue(initial), [initial]);
 
-  // Songs shown here that get played are the ones noted as played after a search (state/recentSearches.ts).
-  useEffect(() => rememberSearchSongs(recent), [recent]);
-  useEffect(() => rememberSearchSongs(suggestions.data?.items ?? []), [suggestions.data]);
+  // Items shown here that get chosen or played are the ones noted as selected after a search (state/recentSearches.ts).
+  useEffect(() => rememberSearchItems(recent), [recent]);
+  useEffect(() => rememberSearchItems(suggestions.data?.items ?? []), [suggestions.data]);
 
   const options: Option[] = typing
     ? [
@@ -55,7 +55,7 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
       setValue(option.text);
       return onSearch(option.text);
     }
-    // A song that is played is remembered by playTrack, to be listed under Recent searches next time.
+    useRecentSearches.getState().addItem(option.item);
     const href = hrefFor(option.item);
     if (href) navigate(href);
     else playTrack(option.item);
@@ -165,18 +165,14 @@ export function SearchField({ initial, onSearch }: { initial: string; onSearch: 
                   <div className="flex min-w-0 flex-col">
                     <span className="truncate type-body">{option.item.title}</span>
                     <span className="mt-px truncate type-callout text-secondary">
-                      {option.recent ? (
-                        <RecentArtists
-                          item={option.item}
-                          onOpen={(href) => {
-                            setOpen(false);
-                            setActive(-1);
-                            navigate(href);
-                          }}
-                        />
-                      ) : (
-                        option.item.subtitle || kindLabel(option.item.kind)
-                      )}
+                      <RecentSubtitle
+                        item={option.item}
+                        onOpen={(href) => {
+                          setOpen(false);
+                          setActive(-1);
+                          navigate(href);
+                        }}
+                      />
                     </span>
                   </div>
                 </>
@@ -247,35 +243,52 @@ function PlayBadge({ item }: { item: MusicItem }) {
   );
 }
 
-/** The second line of a recent song: its artists, each opening that artist's page when YouTube links it; YouTube's own line when it names none. */
-function RecentArtists({ item, onOpen }: { item: MusicItem; onOpen: (href: string) => void }) {
-  if (!item.artists.length) return <>{item.subtitle.trim() || kindLabel(item.kind)}</>;
+/** Spotify-style subtitle: Type (Song, Album, Playlist, Artist) • Artist or Details */
+function RecentSubtitle({ item, onOpen }: { item: MusicItem; onOpen: (href: string) => void }) {
+  const label = kindLabel(item.kind) || 'Song';
+  if (item.kind === 'artist') {
+    return <span>Artist</span>;
+  }
+  const artistsOrDetails =
+    item.artists.length > 0 ? (
+      <>
+        {item.artists.map((artist, i) => {
+          const href = artistHref(artist.id);
+          return (
+            <span key={`${artist.id ?? ''}${artist.name}${i}`}>
+              {i > 0 && ', '}
+              {href ? (
+                <button
+                  type="button"
+                  tabIndex={-1}
+                  className="cursor-pointer rounded-[3px] text-secondary hover:text-primary hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpen(href);
+                  }}
+                >
+                  {artist.name}
+                </button>
+              ) : (
+                artist.name
+              )}
+            </span>
+          );
+        })}
+      </>
+    ) : item.subtitle?.trim() ? (
+      <span>{item.subtitle.trim()}</span>
+    ) : null;
+
   return (
     <>
-      {item.artists.map((artist, i) => {
-        const href = artistHref(artist.id);
-        return (
-          <span key={`${artist.id ?? ''}${artist.name}${i}`}>
-            {i > 0 && ', '}
-            {href ? (
-              <button
-                type="button"
-                tabIndex={-1}
-                className="cursor-pointer rounded-[3px] text-secondary hover:text-primary hover:underline"
-                onClick={(e) => {
-                  // Opens the artist, not the song: the row's own click would play it.
-                  e.stopPropagation();
-                  onOpen(href);
-                }}
-              >
-                {artist.name}
-              </button>
-            ) : (
-              artist.name
-            )}
-          </span>
-        );
-      })}
+      <span>{label}</span>
+      {artistsOrDetails && (
+        <>
+          <span> • </span>
+          {artistsOrDetails}
+        </>
+      )}
     </>
   );
 }
@@ -284,5 +297,5 @@ function RecentArtists({ item, onOpen }: { item: MusicItem; onOpen: (href: strin
 const isPlayable = (kind: MusicItem['kind']) => kind === 'song' || kind === 'video' || kind === 'episode';
 
 function kindLabel(kind: MusicItem['kind']): string {
-  return { song: 'Song', video: 'Video', album: 'Album', playlist: 'Playlist', 'spotify-playlist': 'Spotify Playlist', artist: 'Artist', episode: 'Episode', podcast: 'Podcast', unknown: '' }[kind];
+  return { song: 'Song', video: 'Video', album: 'Album', playlist: 'Playlist', 'spotify-playlist': 'Playlist', artist: 'Artist', episode: 'Episode', podcast: 'Podcast', unknown: '' }[kind];
 }

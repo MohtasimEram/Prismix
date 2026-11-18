@@ -4,7 +4,7 @@ import { LoadError, NeedsExtension } from '@/components/music/States';
 import { useExplore, useYouTubeReady } from '@/data/music/queries';
 import { NewSkeleton } from '@/skeletons/PageSkeletons';
 
-/** New: YouTube Music's Explore (new albums and singles, trending, new videos). */
+/** New: YouTube Music's Explore and New Releases. */
 export default function NewPage() {
   const { missing } = useYouTubeReady();
   const explore = useExplore();
@@ -12,7 +12,7 @@ export default function NewPage() {
   if (missing) {
     return (
       <>
-        <PageHeader title="New" />
+        <PageHeader title="New Releases" />
         <NeedsExtension />
       </>
     );
@@ -20,7 +20,7 @@ export default function NewPage() {
   if (explore.isError) {
     return (
       <>
-        <PageHeader title="New" />
+        <PageHeader title="New Releases" />
         <LoadError error={explore.error} onRetry={() => void explore.refetch()} />
       </>
     );
@@ -28,7 +28,7 @@ export default function NewPage() {
   if (!explore.data) return <NewSkeleton />;
   return (
     <>
-      <PageHeader title="New" />
+      <PageHeader title="New Releases" />
       <Shelves shelves={explore.data} />
     </>
   );

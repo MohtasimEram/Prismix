@@ -59,8 +59,22 @@ function linkOf(endpoint: unknown): BrowseLink | null {
   return payload?.browseId ? { browseId: payload.browseId, params: payload.params ?? null } : null;
 }
 
-function artistsOf(list: { name: string; channel_id?: string | undefined }[] | undefined): ArtistRef[] {
-  return (list ?? []).filter((a) => a.name).map((a) => ({ name: a.name, id: a.channel_id ?? null }));
+function artistsOf(
+  list:
+    | {
+        name: string;
+        channel_id?: string | undefined;
+        id?: string | undefined;
+        endpoint?: unknown;
+      }[]
+    | undefined,
+): ArtistRef[] {
+  return (list ?? [])
+    .filter((a) => a.name)
+    .map((a) => ({
+      name: a.name,
+      id: a.channel_id ?? a.id ?? linkOf(a.endpoint)?.browseId ?? null,
+    }));
 }
 
 function kindOf(itemType: string | undefined, id: string | undefined): ItemKind {
